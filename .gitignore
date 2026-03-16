@@ -11,5 +11,8 @@ __pycache__/
 *.pyc
 .venv/
 
+# 环境变量
+.env
+
 # OS
 .DS_Store

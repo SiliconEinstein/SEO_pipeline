@@ -38,5 +38,34 @@ seo:
   # 排除模式：路径包含这些字符串的页面会被跳过
   exclude_patterns: []                        # ← 如 ["admin", "test"]
 
+# --- LLM 优化配置 ---
+optimize:
+  # litellm 模型名称（通过 LiteLLM Proxy 调用）
+  model: "claude-sonnet-4-20250514"
+
+  # Prompt 模板路径（相对于项目根目录）
+  prompt_template: ".claude/skills/seo-optimize/templates/rewrite-prompt.md"
+
+  # 默认处理 Top N 页面
+  top: 30
+
+  # 每批页面数（每个 API 请求处理的页面数量）
+  batch_size: 10
+
+  # 并发 API 请求数（过高可能触发 rate limit）
+  concurrency: 3
+
+  # 生成温度（0-1，越低越确定性）
+  temperature: 0.3
+
+  # 最大输出 token 数（10 页约需 2000-4000 tokens）
+  max_tokens: 4096
+
+  # 单次 API 请求超时（秒）
+  timeout: 120
+
+  # 单 batch 失败重试次数
+  max_retries: 2
+
 # --- 输出目录 ---
 output_dir: "output"
