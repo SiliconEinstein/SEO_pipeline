@@ -2,8 +2,6 @@
 client_secret_*.json
 token.json
 
-# 你的实际配置（包含站点信息）
-config.yaml
 
 # 输出数据
 output/
