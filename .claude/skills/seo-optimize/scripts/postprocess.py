@@ -65,10 +65,18 @@ def ensure_brand_suffix(title, lang):
     return title
 
 
-def enhance_schema(schema_list, headline, desc, path, page_type):
-    """增强 Schema.org 结构化数据。"""
+def enhance_schema(schema_list, headline, desc, path, page_type, rewrite=None):
+    """增强 Schema.org 结构化数据，优先使用 LLM 生成的语义字段。"""
+    if rewrite is None:
+        rewrite = {}
+
     if not schema_list:
         schema_list = [{"@context": "https://schema.org", "@type": "Article"}]
+
+    # LLM 生成的语义字段（fallback 到机械默认值）
+    term_name = rewrite.get("schema_term_name", headline)
+    subject = rewrite.get("schema_subject", "Science")
+    course_name = rewrite.get("schema_course_name")
 
     for schema in schema_list:
         schema["headline"] = headline
@@ -92,15 +100,26 @@ def enhance_schema(schema_list, headline, desc, path, page_type):
                 else:
                     schema["educationalLevel"] = "Undergraduate"
 
-        elif page_type == "keyword":
-            if "about" not in schema:
-                schema["about"] = {
-                    "@type": "DefinedTerm",
-                    "name": headline,
-                    "inDefinedTermSet": "Science",
+            # 使用 LLM 生成的课程名
+            if course_name:
+                schema["isPartOf"] = {
+                    "@type": "Course",
+                    "name": course_name,
                 }
-            elif isinstance(schema["about"], dict) and schema["about"].get("@type") != "DefinedTerm":
-                schema["about"]["@type"] = "DefinedTerm"
+
+            # about 使用 LLM 生成的术语名和学科
+            schema["about"] = {
+                "@type": "DefinedTerm",
+                "name": term_name,
+                "inDefinedTermSet": subject,
+            }
+
+        elif page_type == "keyword":
+            schema["about"] = {
+                "@type": "DefinedTerm",
+                "name": term_name,
+                "inDefinedTermSet": subject,
+            }
 
     return schema_list
 
@@ -140,14 +159,16 @@ def postprocess_page(path, rewrite, orig, ctx):
     opt["twitter_title"] = title
     opt["twitter_description"] = desc
 
-    # 5. 更新 meta_keywords
-    if top_queries:
+    # 5. 更新 meta_keywords（优先使用 LLM 生成，fallback 到查询词拼接）
+    if rewrite.get("meta_keywords"):
+        opt["meta_keywords"] = rewrite["meta_keywords"]
+    elif top_queries:
         opt["meta_keywords"] = ",".join(q["query"] for q in top_queries[:5])
 
-    # 6. 增强 Schema.org
+    # 6. 增强 Schema.org（传入 rewrite 以使用 LLM 生成的语义字段）
     headline = title.replace(BRAND_SUFFIX, "").strip()
     opt["schema_json_ld"] = enhance_schema(
-        opt.get("schema_json_ld", []), headline, desc, path, page_type
+        opt.get("schema_json_ld", []), headline, desc, path, page_type, rewrite
     )
 
     return opt, stats

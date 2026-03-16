@@ -62,7 +62,7 @@ uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --range 31
 
 将页面分为每 10 个一批，使用 Agent tool 并行处理。每个 Agent 使用 [rewrite-prompt.md](templates/rewrite-prompt.md) 中的 prompt 模板。
 
-**Agent 输出格式：** JSON，key 为 path，value 包含 `title` 和 `meta_description`。
+**Agent 输出格式：** JSON，key 为 path，value 包含 `title`、`meta_description`、`meta_keywords`、`schema_term_name`、`schema_subject`，以及 `schema_course_name`（仅 course_article 页面）。
 
 **Agent 输出校验：**
 - 验证返回的 JSON 可解析，且 key 为预期的 path
@@ -70,7 +70,7 @@ uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --range 31
 
 ### 5-6. 后处理与输出
 
-先将所有 Agent 输出合并为一个 JSON 文件（key=path, value={title, meta_description}），保存到 `/tmp/seo_rewritten.json`，然后运行 [postprocess.py](scripts/postprocess.py)：
+先将所有 Agent 输出合并为一个 JSON 文件（key=path, value={title, meta_description, meta_keywords, schema_term_name, schema_subject, schema_course_name}），保存到 `/tmp/seo_rewritten.json`，然后运行 [postprocess.py](scripts/postprocess.py)：
 
 ```bash
 uv run python .claude/skills/seo-optimize/scripts/postprocess.py --rewritten /tmp/seo_rewritten.json

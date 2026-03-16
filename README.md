@@ -20,7 +20,7 @@
                          │                                  │
                          ▼                                  ▼
               output/gsc/*.csv                   output/seo/optimized_metadata.json
-              output/seo/priority_ranked.csv     output/seo/original_metadata_topN.json
+              output/seo/priority_ranked.csv     output/seo/original_metadata_backup.json
               output/seo/existing_metadata.json
               output/seo/audit_report.csv
 ```
@@ -35,6 +35,8 @@
 ├── .claude/skills/seo-optimize/       # Claude Code Skill（LLM 重写）
 │   ├── SKILL.md                       #   skill 主指令 + frontmatter
 │   ├── templates/rewrite-prompt.md    #   agent 重写 prompt 模板
+│   ├── scripts/prepare_contexts.py    #   数据加载 + 上下文构建脚本
+│   ├── scripts/postprocess.py         #   后处理 + 增量输出脚本
 │   └── examples/sample-output.json    #   输出格式示例
 ├── steps/                             # Pipeline 步骤模块
 │   ├── fetch_gsc.py                   #   Step 1: GSC 数据拉取
@@ -262,9 +264,49 @@ priority_score = impressions × (1 - CTR)
 **做了什么**：
 1. 加载审计报告、现有元数据、查询词数据、优先级排名
 2. 按优先级取 Top N 个页面，打包每个页面的上下文（现有元数据 + 问题列表 + 查询词 + 页面类型 + 语言）
-3. 分批（每 10 页一批）使用 Agent 并行重写 title 和 description
+3. 分批（每 10 页一批）使用 Agent 并行重写 title、description、keywords 和 Schema.org 语义字段
 4. 后处理：同步 OG/Twitter 标签、更新 keywords、增强 Schema.org
 5. 输出优化后的完整元数据 + 原始元数据（同格式，便于 diff）
+
+其中步骤 1-2 和步骤 4-5 由两个辅助脚本完成：
+
+#### `scripts/prepare_contexts.py` — 数据加载与上下文构建
+
+将 4 个 pipeline 输出文件解析合并，为每个目标页面生成重写上下文。
+
+```bash
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --top 30        # 默认 Top 30
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --top 50        # Top 50
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --range 31-60   # 排名 31-60
+```
+
+**处理逻辑**：
+1. 从 `priority_ranked.csv` 中按指定范围提取目标页面（处理 `utf-8-sig` BOM 编码）
+2. 从 `audit_report.csv` 中匹配每个页面的问题列表
+3. 从 `existing_metadata.json`（约 6MB）中提取现有元数据；找不到的页面跳过并报告
+4. 从最新的 `query_page_zero_click_*.csv` 中提取每页 Top 5 查询词（按展示量排序）；零点击 CSV 的 `路径` 列可能是完整 URL，脚本自动用 `urlparse` 提取 path
+5. 将结果分批输出到 `/tmp/seo_batch_*.json`（每批 10 个），供 Agent 并行消费
+
+**额外参数**：`--batch-size`（每批页面数，默认 10）、`--output-dir`（pipeline 输出目录，默认 `output`）
+
+#### `scripts/postprocess.py` — 后处理与增量输出
+
+将 Agent 重写结果与原始元数据合并，补全所有 SEO 字段。
+
+```bash
+uv run python .claude/skills/seo-optimize/scripts/postprocess.py --rewritten /tmp/seo_rewritten.json
+```
+
+**处理逻辑**：
+1. **长度校验** — title > 60 或 desc > 155 字符时在词/句边界智能截断（中英文分别处理）
+2. **品牌后缀** — 确保 title 以 ` | SciencePedia` 结尾
+3. **OG 标签同步** — og_title / og_description / og_url / og_type 与页面元数据一致；保留原有 og_image、og_site_name
+4. **Twitter 标签同步** — twitter_title / twitter_description 同步；保留原有 twitter_card、twitter_image、twitter_site
+5. **Keywords 更新** — 优先使用 LLM 从现有 keywords + 查询词中精选生成 5-8 个关键词，fallback 到 Top 5 查询词拼接
+6. **Schema.org 增强** — 更新 headline（去品牌后缀）和 description；补充 datePublished / dateModified；course_article 页面添加 `LearningResource` type 和 `isPartOf.Course`；keyword 页面添加 `about.DefinedTerm`；术语名（`about.name`）和学科（`about.inDefinedTermSet`）由 LLM 生成精确语义值（替代机械复制 headline 和硬编码 "Science"）
+7. **增量合并** — 如果 `optimized_metadata.json` 已存在（如之前跑过 Top 30），先读取再 merge，相同 path 以本次为准
+
+脚本结束后自动打印统计摘要：处理/跳过页数、各问题修复数量、title/description 长度变化、语言修正数量。
 
 **重写规则**：
 - Title ≤ 60 字符，含主关键词，以品牌后缀结尾
@@ -276,8 +318,8 @@ priority_score = impressions × (1 - CTR)
 **输出**：
 | 文件 | 说明 |
 |------|------|
-| `output/seo/optimized_metadata.json` | 优化后的完整元数据（含 OG/Twitter/Schema） |
-| `output/seo/original_metadata_topN.json` | 对应的原始元数据（同格式，便于对比） |
+| `output/seo/optimized_metadata.json` | 优化后的完整元数据（含 OG/Twitter/Schema），支持增量累积 |
+| `output/seo/original_metadata_backup.json` | 本次处理的原始元数据（同格式，便于对比） |
 
 ---
 
@@ -295,7 +337,7 @@ output/
 │   ├── audit_report.csv                           #   审计报告
 │   ├── audit_summary.json                         #   审计汇总统计
 │   ├── optimized_metadata.json                    #   优化后元数据（skill 输出）
-│   └── original_metadata_topN.json                #   原始元数据对照（skill 输出）
+│   └── original_metadata_backup.json                #   原始元数据对照（skill 输出）
 └── reports/                                      # 可视化报告（预留）
 ```
 
