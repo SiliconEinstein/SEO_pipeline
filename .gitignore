@@ -1,0 +1,17 @@
+# OAuth 凭证（不要提交）
+client_secret_*.json
+token.json
+
+# 你的实际配置（包含站点信息）
+config.yaml
+
+# 输出数据
+output/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store

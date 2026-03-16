@@ -1,0 +1,18 @@
+[project]
+name = "seo-pipeline"
+version = "0.1.0"
+description = "End-to-end SEO metadata detection and optimization pipeline"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9",
+    "beautifulsoup4>=4.12",
+    "google-api-python-client>=2.100",
+    "google-auth>=2.23",
+    "google-auth-oauthlib>=1.1",
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "pyyaml>=6.0",
+]
+
+[project.scripts]
+seo-pipeline = "seo_pipeline.main:main"

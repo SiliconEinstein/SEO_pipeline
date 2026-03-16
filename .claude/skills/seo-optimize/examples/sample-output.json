@@ -1,0 +1,83 @@
+{
+  "/sciencepedia/feynman/principles_of_genetics_graduate-multiple_alleles_and_allelic_series": {
+    "title": "复等位基因遗传图解：基因型计算与等位基因系列 | SciencePedia",
+    "meta_description": "详解复等位基因的遗传图谱与位置关系，包含基因型数量计算方法、ABO血型等经典案例图解。适合遗传学课程学习与考试复习。",
+    "meta_keywords": "复等位基因,遗传图,基因型数量计算,复等位基因的位置,ABO血型遗传",
+    "meta_robots": "index, follow",
+    "meta_author": null,
+    "og_title": "复等位基因遗传图解：基因型计算与等位基因系列 | SciencePedia",
+    "og_description": "详解复等位基因的遗传图谱与位置关系，包含基因型数量计算方法、ABO血型等经典案例图解。适合遗传学课程学习与考试复习。",
+    "og_url": "https://www.bohrium.com/sciencepedia/feynman/principles_of_genetics_graduate-multiple_alleles_and_allelic_series",
+    "og_type": "article",
+    "og_image": "https://www.bohrium.com/logo.png",
+    "og_site_name": "Bohrium",
+    "og_image_width": null,
+    "og_image_height": null,
+    "twitter_card": "summary_large_image",
+    "twitter_title": "复等位基因遗传图解：基因型计算与等位基因系列 | SciencePedia",
+    "twitter_description": "详解复等位基因的遗传图谱与位置关系，包含基因型数量计算方法、ABO血型等经典案例图解。适合遗传学课程学习与考试复习。",
+    "twitter_image": "https://www.bohrium.com/logo.png",
+    "twitter_site": null,
+    "canonical": "https://www.bohrium.com/sciencepedia/feynman/principles_of_genetics_graduate-multiple_alleles_and_allelic_series",
+    "alternates": [],
+    "schema_json_ld": [
+      {
+        "@context": "https://schema.org",
+        "@type": ["Article", "LearningResource"],
+        "headline": "复等位基因遗传图解：基因型计算与等位基因系列",
+        "description": "详解复等位基因的遗传图谱与位置关系，包含基因型数量计算方法、ABO血型等经典案例图解。适合遗传学课程学习与考试复习。",
+        "datePublished": "2024-01-15",
+        "dateModified": "2026-03-16",
+        "educationalLevel": "Graduate",
+        "isPartOf": {
+          "@type": "Course",
+          "name": "遗传学原理"
+        },
+        "about": {
+          "@type": "DefinedTerm",
+          "name": "复等位基因与等位基因系列",
+          "inDefinedTermSet": "遗传学"
+        }
+      }
+    ],
+    "h1": ["Multiple Alleles and Allelic Series"]
+  },
+  "/en/sciencepedia/feynman/keyword/entropy_change_in_free_expansion": {
+    "title": "Entropy Change in Free Expansion: Van der Waals Gas | SciencePedia",
+    "meta_description": "Complete derivation of entropy change during free expansion for ideal and van der Waals gases. Covers entropy of the universe, real gas forces, and calculations.",
+    "meta_keywords": "entropy change,free expansion,van der waals gas,entropy of the universe,real gas entropy",
+    "meta_robots": "index, follow",
+    "meta_author": null,
+    "og_title": "Entropy Change in Free Expansion: Van der Waals Gas | SciencePedia",
+    "og_description": "Complete derivation of entropy change during free expansion for ideal and van der Waals gases. Covers entropy of the universe, real gas forces, and calculations.",
+    "og_url": "https://www.bohrium.com/en/sciencepedia/feynman/keyword/entropy_change_in_free_expansion",
+    "og_type": "article",
+    "og_image": "https://www.bohrium.com/logo.png",
+    "og_site_name": "Bohrium",
+    "og_image_width": null,
+    "og_image_height": null,
+    "twitter_card": "summary_large_image",
+    "twitter_title": "Entropy Change in Free Expansion: Van der Waals Gas | SciencePedia",
+    "twitter_description": "Complete derivation of entropy change during free expansion for ideal and van der Waals gases. Covers entropy of the universe, real gas forces, and calculations.",
+    "twitter_image": "https://www.bohrium.com/logo.png",
+    "twitter_site": null,
+    "canonical": "https://www.bohrium.com/en/sciencepedia/feynman/keyword/entropy_change_in_free_expansion",
+    "alternates": [],
+    "schema_json_ld": [
+      {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": "Entropy Change in Free Expansion: Van der Waals Gas",
+        "description": "Complete derivation of entropy change during free expansion for ideal and van der Waals gases. Covers entropy of the universe, real gas forces, and calculations.",
+        "datePublished": "2024-01-15",
+        "dateModified": "2026-03-16",
+        "about": {
+          "@type": "DefinedTerm",
+          "name": "Entropy Change in Free Expansion",
+          "inDefinedTermSet": "Thermodynamics"
+        }
+      }
+    ],
+    "h1": ["Entropy Change in Free Expansion"]
+  }
+}

@@ -1,0 +1,42 @@
+# ===== SEO Pipeline 统一配置 =====
+#
+# 使用方法：复制此文件为 config.yaml，填入你的实际配置
+#   cp config.yaml.example config.yaml
+#
+
+# --- Google Search Console ---
+# 你的网站在 GSC 中的 URL（登录 https://search.google.com/search-console 查看）
+# 格式: "https://example.com" 或 "sc-domain:example.com"
+site_url: "sc-domain:example.com"             # ← 改成你的站点
+
+# OAuth 凭证文件路径（相对于项目根目录）
+# 获取方式: Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID → Download JSON
+credentials_file: "client_secret_xxx.json"    # ← 改成你的凭证文件名
+
+# 数据拉取的时间范围
+# 可选: "7d", "28d", "30d", "3m", "6m", 或 "2026-01-01,2026-03-01"
+date_range: "30d"
+
+# --- SEO 优化配置 ---
+seo:
+  # 网站域名（crawl 步骤用来拼接完整 URL）
+  base_url: "https://www.example.com"         # ← 改成你的网站域名
+
+  # 品牌后缀（title 末尾的标识，如 " | YourBrand"）
+  brand_suffix: " | YourBrand"                # ← 改成你的品牌名
+
+  # 审计阈值（一般不需要改）
+  max_title_length: 60
+  max_desc_length: 155
+
+  # 异步抓取并发数（网站承受能力差可以调低）
+  crawl_concurrency: 20
+
+  # 页面过滤：只处理路径包含此字符串的页面（留空则处理全部）
+  page_filter: ""                             # ← 如 "blog" 只处理博客页面
+
+  # 排除模式：路径包含这些字符串的页面会被跳过
+  exclude_patterns: []                        # ← 如 ["admin", "test"]
+
+# --- 输出目录 ---
+output_dir: "output"
