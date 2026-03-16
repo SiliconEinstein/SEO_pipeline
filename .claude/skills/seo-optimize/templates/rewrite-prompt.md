@@ -49,16 +49,27 @@
 
 ## 输出格式
 
-返回 JSON，key 为 path，value 包含 `title` 和 `meta_description`：
+返回 JSON，key 为 path，value 包含 `title`、`meta_description` 和对应的字符数：
 
 ```json
 {
   "/sciencepedia/feynman/...": {
     "title": "新标题 | SciencePedia",
-    "meta_description": "新描述..."
+    "title_length": 25,
+    "meta_description": "新描述...",
+    "desc_length": 140
   }
 }
 ```
+
+**字符数自检（必须执行）：**
+- 写完每条 title 后数一遍字符数，如果超过 60 就重写，直到 ≤ 60
+- 写完每条 description 后数一遍字符数，如果超过 155 就重写，直到 ≤ 155
+- `title_length` 和 `desc_length` 字段填入实际字符数，用于下游校验
+
+**常见超长原因及对策：**
+- 英文 description 容易写到 160-200 字符 → 砍掉最后一个分句或少覆盖一个查询词
+- 包含数学符号/特殊字符时需注意 Unicode 字符计数
 
 ## 页面数据
 

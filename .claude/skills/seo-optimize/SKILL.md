@@ -39,41 +39,24 @@ uv run python main.py audit
 
 ## 执行步骤
 
-### 1. 加载数据
+### 1-3. 加载数据、解析参数、准备重写上下文
 
-读取以下文件：
-- `output/seo/audit_report.csv` — 审计报告（问题列表）
-- `output/seo/existing_metadata.json` — 现有元数据
-- `output/gsc/query_page_zero_click_*.csv` — 零点击查询词数据
-- `output/seo/priority_ranked.csv` — 优先级排名
+使用 [prepare_contexts.py](scripts/prepare_contexts.py) 一步完成数据加载、参数解析和上下文构建：
 
-### 2. 解析参数
+```bash
+# 根据 $ARGUMENTS 选择对应的参数
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --top 30        # 默认
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --top 50        # Top 50
+uv run python .claude/skills/seo-optimize/scripts/prepare_contexts.py --range 31-60   # 排名 31-60
+```
 
-根据 `$ARGUMENTS` 确定处理范围：
-- 空或 `30` → Top 30 页面（priority_ranked.csv 的前 30 行）
-- `50` → Top 50
-- `31-60` → 排名 31 到 60 的页面
+脚本自动处理：
+- CSV 的 `utf-8-sig` 编码和中文列名映射
+- 从 `existing_metadata.json` 匹配目标页面（缺失则跳过并报告）
+- 从最新的零点击查询词 CSV 提取 Top 5 查询词
+- 输出分批 JSON 到 `/tmp/seo_batch_*.json`（每批 10 个），以及 `/tmp/seo_rewrite_contexts.json` 和 `/tmp/seo_original_metadata.json`
 
-**边界情况：**
-- 如果请求范围超出 priority_ranked.csv 的总行数，自动截断到实际行数，并提示用户实际处理了多少页面
-- 如果参数格式无法识别，报错并展示用法示例
-
-### 3. 准备重写上下文
-
-对于每个目标页面，打包以下信息：
-- **path**: URL 路径
-- **current_title**: 现有 title
-- **current_description**: 现有 meta description
-- **current_keywords**: 现有 meta keywords
-- **issues**: 审计发现的问题列表
-- **top_queries**: 该页面的 Top 5 查询词（按展示量排序）；如果该页面在零点击查询词数据中没有记录，则留空数组
-- **page_type**: `course_article` 或 `keyword`
-- **language**: `zh` 或 `en`（根据 URL 前缀判断）
-- **avg_position**: 平均搜索排名
-
-**边界情况：**
-- 如果某页面在 `existing_metadata.json` 中找不到，跳过该页面并在最终摘要中列出被跳过的路径
-- 如果零点击查询词数据文件不存在或为空，`top_queries` 设为空数组，仍然基于 issues 进行重写
+**如需自定义**，脚本还支持 `--batch-size` 和 `--output-dir` 参数。详见脚本文件头部的 docstring。
 
 ### 4. 分批并行重写
 
@@ -81,46 +64,31 @@ uv run python main.py audit
 
 **Agent 输出格式：** JSON，key 为 path，value 包含 `title` 和 `meta_description`。
 
-### 5. 后处理
+**Agent 输出校验：**
+- 验证返回的 JSON 可解析，且 key 为预期的 path
+- 如果某个 Agent 返回格式异常或缺少页面，记录并在摘要中报告，不阻塞其他批次
 
-合并所有 Agent 输出后，对每个页面补全完整元数据：
+### 5-6. 后处理与输出
 
-```
-对每个页面:
-  1. 验证 title ≤ 60 字符，desc ≤ 155 字符
-     如果超长，智能截断而非简单裁剪（在词边界处截断，保留核心语义）
-  2. 确保 title 以 " | SciencePedia" 结尾
-  3. 同步 OG 标签（社交媒体分享时显示的内容，必须与页面元数据一致）:
-     - og_title = title
-     - og_description = description
-     - og_url = base_url + path
-     - og_type = "article"
-     - 保留原有 og_image, og_site_name（这些是站点级配置，不应覆盖）
-  4. 同步 Twitter 标签（Twitter 卡片展示，逻辑同 OG）:
-     - twitter_title = title
-     - twitter_description = description
-     - 保留原有 twitter_card, twitter_image, twitter_site
-  5. 更新 meta_keywords（从 top 查询词提取）
-  6. 增强 Schema.org（结构化数据帮助搜索引擎理解页面内容，可触发富摘要展示）:
-     - 更新 headline = title (去掉品牌后缀，因为 Schema headline 应是纯内容标题)
-     - 更新 description = meta_description
-     - 添加 datePublished 和 dateModified (如果缺失，搜索引擎用此判断内容新鲜度)
-     - course_article 页面: 添加 LearningResource type（匹配教育类内容的结构化数据类型）
-     - keyword 页面: 添加 about.DefinedTerm（匹配术语/概念类内容）
-  7. 保留其他原有字段 (canonical, alternates, h1, meta_robots, meta_author)
+先将所有 Agent 输出合并为一个 JSON 文件（key=path, value={title, meta_description}），保存到 `/tmp/seo_rewritten.json`，然后运行 [postprocess.py](scripts/postprocess.py)：
+
+```bash
+uv run python .claude/skills/seo-optimize/scripts/postprocess.py --rewritten /tmp/seo_rewritten.json
 ```
 
-输出格式参考 [sample-output.json](examples/sample-output.json)。
+脚本自动完成以下后处理（输出格式参考 [sample-output.json](examples/sample-output.json)）：
 
-### 6. 输出
+1. **验证长度** — title ≤ 60 字符，desc ≤ 155 字符，超长时在词/句边界智能截断
+2. **品牌后缀** — 确保 title 以 ` | SciencePedia` 结尾
+3. **同步 OG 标签** — og_title/og_description/og_url/og_type，保留原有 og_image、og_site_name
+4. **同步 Twitter 标签** — twitter_title/twitter_description，保留原有 twitter_card、twitter_image、twitter_site
+5. **更新 meta_keywords** — 从 top 查询词提取
+6. **增强 Schema.org** — headline（去品牌后缀）、description、datePublished/dateModified、course_article 加 LearningResource、keyword 加 DefinedTerm
+7. **保留原有字段** — canonical、alternates、h1、meta_robots、meta_author
+8. **增量合并** — 如果 `optimized_metadata.json` 已存在，merge 而非覆盖
 
-将结果写入：
-- `output/seo/optimized_metadata.json` — 完整优化后的元数据
-- `output/seo/original_metadata_topN.json` — 对应的原始元数据（同格式，便于对比）
+输出：
+- `output/seo/optimized_metadata.json` — 完整优化后的元数据（增量累积）
+- `output/seo/original_metadata_backup.json` — 本次处理的原始元数据
 
-输出完成后，打印统计摘要：
-- 总处理页数
-- 被跳过的页数及原因
-- 各问题修复数量
-- title/description 平均长度变化
-- 语言修正数量
+脚本会自动打印统计摘要（处理页数、跳过页数、问题修复数量、长度变化、语言修正数量）。
