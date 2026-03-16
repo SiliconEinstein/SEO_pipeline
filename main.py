@@ -3,14 +3,16 @@
 SEO Pipeline — 统一 CLI 入口
 
 子命令:
-    fetch   — 从 Google Search Console 拉取数据
-    rank    — 优先级排名
-    crawl   — 抓取现有 SEO 元数据
-    audit   — 质量审计
-    all     — 按顺序执行全部 (可用 --skip 跳过某步)
+    fetch    — 从 Google Search Console 拉取数据
+    rank     — 优先级排名
+    crawl    — 抓取现有 SEO 元数据
+    audit    — 质量审计
+    optimize — LLM 重写 SEO 元数据
+    all      — 按顺序执行全部 (可用 --skip 跳过某步)
 
 使用方法:
     uv run python main.py fetch
+    uv run python main.py optimize --top 50
     uv run python main.py all
     uv run python main.py all --skip fetch
 """
@@ -62,7 +64,7 @@ def _setup_logging(verbose: bool) -> None:
 # Step registry
 # ---------------------------------------------------------------------------
 
-STEPS = ["fetch", "rank", "crawl", "audit"]
+STEPS = ["fetch", "rank", "crawl", "audit", "optimize"]
 
 
 def _import_step(name: str):
@@ -77,6 +79,7 @@ def _import_step(name: str):
         "rank": "rank",
         "crawl": "crawl",
         "audit": "audit",
+        "optimize": "optimize",
     }
     if name not in module_map:
         raise ValueError(f"Unknown step: {name}")
@@ -114,11 +117,13 @@ def main(argv: list[str] | None = None) -> None:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  uv run python main.py fetch          # 仅拉取 GSC 数据
-  uv run python main.py rank            # 仅排名
-  uv run python main.py crawl           # 仅抓取元数据
-  uv run python main.py audit           # 仅审计
-  uv run python main.py all             # 执行全部步骤
+  uv run python main.py fetch              # 仅拉取 GSC 数据
+  uv run python main.py rank              # 仅排名
+  uv run python main.py crawl             # 仅抓取元数据
+  uv run python main.py audit             # 仅审计
+  uv run python main.py optimize          # LLM 优化 Top 30
+  uv run python main.py optimize --top 50 # LLM 优化 Top 50
+  uv run python main.py all               # 执行全部步骤
   uv run python main.py all --skip fetch  # 跳过 fetch
 """,
     )
@@ -147,11 +152,27 @@ def main(argv: list[str] | None = None) -> None:
         help="输出详细日志",
     )
 
+    # optimize 步骤专用参数
+    opt_group = parser.add_mutually_exclusive_group()
+    opt_group.add_argument(
+        "--top", type=int, help="optimize: 处理 Top N 页面 (覆盖 config.yaml)"
+    )
+    opt_group.add_argument(
+        "--range", type=str, help="optimize: 排名范围如 31-60 (覆盖 config.yaml)"
+    )
+
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
     # Load config
     config = _load_config(args.config)
+
+    # Inject optimize CLI overrides
+    if getattr(args, "top", None):
+        config.setdefault("optimize", {})["top"] = args.top
+    if getattr(args, "range", None):
+        config.setdefault("optimize", {})["range"] = args.range
+
     output_dir = Path(config.get("output_dir", "output"))
     output_dir.mkdir(parents=True, exist_ok=True)
 
