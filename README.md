@@ -78,8 +78,8 @@ uv run python main.py optimize --range 31-60 # 增量优化排名 31-60
 │   ├── crawl.py
 │   ├── audit.py
 │   └── optimize.py
-├── .claude/skills/seo-optimize/
-│   └── templates/rewrite-prompt.md   # LLM 重写 prompt 模板
+├── templates/
+│   └── rewrite-prompt.md   # LLM 重写 prompt 模板
 ├── config.yaml.example     # 配置模板
 ├── .env.example            # API 凭据模板
 ├── pyproject.toml

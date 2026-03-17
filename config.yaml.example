@@ -44,7 +44,7 @@ optimize:
   model: "claude-sonnet-4-5"
 
   # Prompt 模板路径（相对于项目根目录）
-  prompt_template: ".claude/skills/seo-optimize/templates/rewrite-prompt.md"
+  prompt_template: "templates/rewrite-prompt.md"
 
   # 默认处理 Top N 页面
   top: 30

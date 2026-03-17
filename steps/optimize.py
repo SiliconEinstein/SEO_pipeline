@@ -600,7 +600,7 @@ def run(config: dict, output_dir: Path) -> dict:
     # 2. Load prompt and call API
     print("  [2/4] 调用 LLM API 重写...")
     template_path = opt_config.get(
-        "prompt_template", ".claude/skills/seo-optimize/templates/rewrite-prompt.md"
+        "prompt_template", "templates/rewrite-prompt.md"
     )
     prompt_template = _load_prompt_template(template_path)
     api_results = asyncio.run(_rewrite_batches(tmp_dir, prompt_template, config))
