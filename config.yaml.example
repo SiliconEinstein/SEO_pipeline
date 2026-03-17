@@ -41,7 +41,7 @@ seo:
 # --- LLM 优化配置 ---
 optimize:
   # litellm 模型名称（通过 LiteLLM Proxy 调用）
-  model: "claude-sonnet-4-20250514"
+  model: "claude-sonnet-4-5"
 
   # Prompt 模板路径（相对于项目根目录）
   prompt_template: ".claude/skills/seo-optimize/templates/rewrite-prompt.md"
