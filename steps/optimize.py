@@ -221,14 +221,9 @@ def _extract_json(text: str) -> dict:
 
 
 def _load_prompt_template(template_path: str) -> str:
-    """Load prompt template, stripping Agent-specific sections."""
+    """Load prompt template."""
     with open(template_path, "r", encoding="utf-8") as f:
-        content = f.read()
-    # Strip "## 输出保存" section (Agent-specific Write tool instruction)
-    content = re.sub(r"## 输出保存.*?(?=## 页面数据)", "", content, flags=re.DOTALL)
-    # Strip "## 页面数据" section and trailing text (data appended programmatically)
-    content = re.sub(r"## 页面数据.*$", "", content, flags=re.DOTALL)
-    return content.rstrip()
+        return f.read().rstrip()
 
 
 async def _rewrite_one_batch(
