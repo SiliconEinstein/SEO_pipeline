@@ -14,7 +14,7 @@
                          脚本自动化                          LLM 驱动
               ┌─────────────────────────────┐    ┌──────────────────────┐
               │                             │    │                      │
-  config.yaml │  fetch → rank → crawl → audit│    │   /seo-optimize      │
+  config.yaml │ fetch → rank → crawl → audit│    │   /seo-optimize      │
               │                             │    │                      │
               └──────────┬──────────────────┘    └──────────┬───────────┘
                          │                                  │
