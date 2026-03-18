@@ -1,0 +1,39 @@
+# ===== SEO Pipeline 统一配置 =====
+
+# --- Google Search Console ---
+site_url: "sc-domain:bohrium.com"
+credentials_file: "client_secret_300706801934-vjh94nr9ommaoovtp4hqs19fktv8dgk9.apps.googleusercontent.com.json"
+date_range: "30d"
+
+# --- SEO 优化配置 ---
+seo:
+  base_url: "https://www.bohrium.com"
+  brand_suffix: " | SciencePedia"
+  max_title_length: 60
+  max_desc_length: 155
+  crawl_concurrency: 20
+  page_filter: "sciencepedia"
+  exclude_patterns: []
+    # - "agent-tools"
+  include_subtypes:
+      - "sciencepedia/feynman"
+      - "sciencepedia/feynman/keyword"
+  subtype_page_types:
+      "sciencepedia/feynman": "course_article"
+      "sciencepedia/feynman/keyword": "keyword"
+      "sciencepedia/agent-tools": "agent_tool"
+
+# --- LLM 优化配置 ---
+optimize:
+  model: "claude-sonnet-4-5"
+  prompt_template: "templates/rewrite-prompt.md"
+  top: 30
+  batch_size: 10
+  concurrency: 3
+  temperature: 0.3
+  max_tokens: 4096
+  timeout: 120
+  max_retries: 2
+
+# --- 输出目录 ---
+output_dir: "output"

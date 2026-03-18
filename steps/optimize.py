@@ -14,8 +14,6 @@ import glob
 import json
 import os
 import re
-import sys
-from datetime import date
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -345,7 +343,12 @@ def _merge_results(tmp_dir: str) -> tuple[dict, list]:
 # Inlined from .claude/skills/seo-optimize/scripts/postprocess.py (2026-03-16)
 # ---------------------------------------------------------------------------
 
-TODAY = date.today().isoformat()
+# Schema.org 内容类型白名单（CreativeWork 子类型）
+# 只有这些类型的 schema 才会被 _enhance_schema 修改
+CONTENT_SCHEMA_TYPES = {
+    "Article", "NewsArticle", "BlogPosting", "TechArticle",
+    "ScholarlyArticle", "LearningResource", "Course", "WebPage",
+}
 
 
 def _smart_truncate(text: str, max_len: int, lang: str = "en") -> str:
@@ -381,24 +384,40 @@ def _ensure_brand_suffix(
     return title
 
 
+def _is_content_schema(schema: dict) -> bool:
+    """Return True if the schema's @type overlaps with CONTENT_SCHEMA_TYPES."""
+    stype = schema.get("@type", "")
+    types = stype if isinstance(stype, list) else [stype]
+    return bool(CONTENT_SCHEMA_TYPES.intersection(types))
+
+
 def _enhance_schema(schema_list, headline, desc, path, page_type, rewrite=None):
-    """Enhance Schema.org structured data with LLM-generated semantic fields."""
+    """Enhance existing Schema.org structured data with LLM-generated semantic fields.
+
+    Only modifies content-type schemas (Article, LearningResource, etc.).
+    Structural schemas (BreadcrumbList, WebSite, Organization) are left untouched.
+    Does not fabricate schemas or dates that the original page doesn't have.
+    """
     if rewrite is None:
         rewrite = {}
     if not schema_list:
-        schema_list = [{"@context": "https://schema.org", "@type": "Article"}]
+        return []
 
-    term_name = rewrite.get("schema_term_name", headline)
-    subject = rewrite.get("schema_subject", "Science")
+    term_name = rewrite.get("schema_term_name")
+    subject = rewrite.get("schema_subject")
     course_name = rewrite.get("schema_course_name")
 
     for schema in schema_list:
+        if not _is_content_schema(schema):
+            continue
+
+        # Sync headline/description with optimized metadata
         schema["headline"] = headline
         schema["description"] = desc
-        if "datePublished" not in schema:
-            schema["datePublished"] = "2024-01-15"
-        schema["dateModified"] = TODAY
+        # dateModified is intentionally NOT updated — the pipeline only changes
+        # meta tags, not page content.  The CMS should set this at deploy time.
 
+        # Add LearningResource type for course_article pages
         if page_type == "course_article":
             types = schema.get("@type", "Article")
             if isinstance(types, str):
@@ -406,19 +425,11 @@ def _enhance_schema(schema_list, headline, desc, path, page_type, rewrite=None):
             if "LearningResource" not in types:
                 types.append("LearningResource")
             schema["@type"] = types
-            if "educationalLevel" not in schema:
-                if "graduate" in path.lower().split("-")[0]:
-                    schema["educationalLevel"] = "Graduate"
-                else:
-                    schema["educationalLevel"] = "Undergraduate"
             if course_name:
                 schema["isPartOf"] = {"@type": "Course", "name": course_name}
-            schema["about"] = {
-                "@type": "DefinedTerm",
-                "name": term_name,
-                "inDefinedTermSet": subject,
-            }
-        elif page_type == "keyword":
+
+        # Add semantic about field if LLM provided term_name and subject
+        if term_name and subject and page_type in ("course_article", "keyword"):
             schema["about"] = {
                 "@type": "DefinedTerm",
                 "name": term_name,
@@ -430,7 +441,9 @@ def _enhance_schema(schema_list, headline, desc, path, page_type, rewrite=None):
 
 def _postprocess_page(path, rewrite, orig, ctx, seo_config):
     """Post-process a single page. Returns (optimized_metadata, stats)."""
-    base_url = seo_config.get("base_url", "https://www.bohrium.com")
+    if "base_url" not in seo_config:
+        raise ValueError("缺少必填配置 seo.base_url，请在 config.yaml 中设置")
+    base_url = seo_config["base_url"]
     brand_suffix = seo_config.get("brand_suffix", " | SciencePedia")
     title_max = seo_config.get("max_title_length", 60)
     desc_max = seo_config.get("max_desc_length", 155)
@@ -457,14 +470,11 @@ def _postprocess_page(path, rewrite, orig, ctx, seo_config):
     opt["og_title"] = title
     opt["og_description"] = desc
     opt["og_url"] = base_url + path
-    opt["og_type"] = "article"
+    if not opt.get("og_type"):
+        opt["og_type"] = "article"
     opt["twitter_title"] = title
     opt["twitter_description"] = desc
-
-    if rewrite.get("meta_keywords"):
-        opt["meta_keywords"] = rewrite["meta_keywords"]
-    elif top_queries:
-        opt["meta_keywords"] = ",".join(q["query"] for q in top_queries[:5])
+    opt["meta_keywords"] = ""
 
     headline = title.replace(brand_suffix, "").strip()
     opt["schema_json_ld"] = _enhance_schema(

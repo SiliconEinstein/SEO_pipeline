@@ -27,16 +27,15 @@ logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/webmasters.readonly"]
 
-#: Page-type definitions — (url_prefixes, label, color_hex).
-#: Kept here so downstream steps (e.g. charting) can import them.
-PAGE_TYPES: list[tuple[list[str], str, str]] = [
-    (["/paper-details/", "/en/paper-details/"], "Paper", "#8b949e"),
-    (["/scholar/", "/en/scholar/"], "Scholar", "#6e7681"),
-    (["/sciencepedia/", "/en/sciencepedia/"], "Sciencepedia", "#d2a8ff"),
-    (["/apps/", "/en/apps/"], "Apps", "#58a6ff"),
-    (["/notebooks/"], "Notebooks", "#3fb950"),
-    (["/intro"], "Intro", "#f0883e"),
-    (["/blog/"], "Blog", "#f778ba"),
+#: Page-type definitions — (url_prefixes, label).
+PAGE_TYPES: list[tuple[list[str], str]] = [
+    (["/paper-details/", "/en/paper-details/"], "Paper"),
+    (["/scholar/", "/en/scholar/"], "Scholar"),
+    (["/sciencepedia/", "/en/sciencepedia/"], "Sciencepedia"),
+    (["/apps/", "/en/apps/"], "Apps"),
+    (["/notebooks/"], "Notebooks"),
+    (["/intro"], "Intro"),
+    (["/blog/"], "Blog"),
 ]
 
 RANKING_BINS: list[tuple[int, int, str]] = [
@@ -54,7 +53,8 @@ RANKING_BINS: list[tuple[int, int, str]] = [
 
 #: Credentials are resolved relative to the current working directory,
 #: so the user should run commands from the project root (seo_pipeline/).
-_CWD = Path.cwd()
+def _cwd() -> Path:
+    return Path.cwd()
 
 
 # ===================================================================== #
@@ -220,7 +220,7 @@ def classify_page_type(path: str) -> str:
     """
     if path in ("/", "", "/en"):
         return "Homepage"
-    for prefixes, name, _ in PAGE_TYPES:
+    for prefixes, name in PAGE_TYPES:
         for prefix in prefixes:
             if path.startswith(prefix) or path == prefix.rstrip("/"):
                 return name
@@ -248,7 +248,7 @@ def _priority_label(position: float) -> str:
     return "D-需大幅优化"
 
 
-def _add_ranking_labels(df: pd.DataFrame, site_url: str) -> pd.DataFrame:
+def _add_ranking_labels(df: pd.DataFrame, site_url: str, base_url: str = "") -> pd.DataFrame:
     """Add ranking-bin, priority, and path columns to a *by-page* DataFrame.
 
     Returns a DataFrame with Chinese column names matching the output spec.
@@ -256,7 +256,7 @@ def _add_ranking_labels(df: pd.DataFrame, site_url: str) -> pd.DataFrame:
     df = df.copy()
 
     # Derive the origin so we can strip it from full URLs to get paths.
-    origin = _site_url_to_origin(site_url)
+    origin = _site_url_to_origin(site_url, base_url)
     df["路径"] = df["page"].str.replace(origin, "", regex=False)
     df["页面类型"] = df["路径"].apply(classify_page_type)
     df["排名段"] = df["position"].apply(_rank_bin)
@@ -301,13 +301,14 @@ def _build_zero_click_report(
     page_filter: str | None,
     exclude_patterns: list[str],
     top_n: int = 10,
+    base_url: str = "",
 ) -> pd.DataFrame:
     """Build the zero-click CSV from a raw query*page DataFrame.
 
     Steps: add path & page type -> filter -> compute page totals ->
     keep pages with zero clicks -> top-N queries per page.
     """
-    origin = _site_url_to_origin(site_url)
+    origin = _site_url_to_origin(site_url, base_url)
     df = df_qp.copy()
     df["路径"] = df["page"].str.replace(origin, "", regex=False)
     df["页面类型"] = df["路径"].apply(classify_page_type)
@@ -356,15 +357,21 @@ def _build_zero_click_report(
 #  Utility
 # ===================================================================== #
 
-def _site_url_to_origin(site_url: str) -> str:
-    """Best-effort conversion of a GSC site_url to a URL origin string.
+def _site_url_to_origin(site_url: str, base_url: str = "") -> str:
+    """Convert a GSC site_url to the URL origin used in search results.
 
-    ``"sc-domain:bohrium.com"``  -> ``"https://www.bohrium.com"``
-    ``"https://example.com/"``   -> ``"https://example.com"``
+    When *base_url* (from ``seo.base_url`` config) is provided it is used
+    directly — this is the most reliable approach because ``sc-domain:``
+    properties can appear with any subdomain in GSC results.
+
+    ``base_url="https://www.bohrium.com"``  -> ``"https://www.bohrium.com"``
+    ``"https://example.com/"``              -> ``"https://example.com"``
     """
+    if base_url:
+        return base_url.rstrip("/")
     if site_url.startswith("sc-domain:"):
         domain = site_url.split(":", 1)[1]
-        return f"https://www.{domain}"
+        return f"https://{domain}"
     return site_url.rstrip("/")
 
 
@@ -398,13 +405,14 @@ def run(config: dict, output_dir: Path) -> dict:
     site_url: str = config["site_url"]
     date_range: str = config.get("date_range", "28d")
     seo_cfg: dict = config.get("seo", {})
+    base_url: str = seo_cfg.get("base_url", "")
     page_filter: str | None = seo_cfg.get("page_filter")
-    exclude_patterns: list[str] = seo_cfg.get("exclude_patterns", [])
+    exclude_patterns: list[str] = [p for p in seo_cfg.get("exclude_patterns", []) if p]
 
     # --- resolve credential paths relative to working directory ---------
     cred_rel = config["credentials_file"]
-    credentials_file = str(_CWD / cred_rel)
-    token_file = str(_CWD / "token.json")
+    credentials_file = str(_cwd() / cred_rel)
+    token_file = str(_cwd() / "token.json")
 
     # --- authenticate ---------------------------------------------------
     logger.info("Authenticating with Google Search Console ...")
@@ -443,7 +451,7 @@ def run(config: dict, output_dir: Path) -> dict:
 
     # --- 1) zero-click report ------------------------------------------
     zero_report = _build_zero_click_report(
-        df_qp, site_url, page_filter, exclude_patterns
+        df_qp, site_url, page_filter, exclude_patterns, base_url=base_url
     )
     zero_path = gsc_dir / f"query_page_zero_click_{filter_tag}_{end_date}.csv"
     if not zero_report.empty:
@@ -454,7 +462,7 @@ def run(config: dict, output_dir: Path) -> dict:
         logger.info("No zero-click pages found; skipping zero-click CSV.")
 
     # --- 2) ranking pages report ----------------------------------------
-    ranked = _add_ranking_labels(df_page, site_url)
+    ranked = _add_ranking_labels(df_page, site_url, base_url)
 
     # Apply page_filter
     if page_filter:

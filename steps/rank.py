@@ -2,18 +2,22 @@
 Step 2: SEO Priority Ranking
 
 Takes GSC data (zero-click CSV + ranking CSV) from output/gsc/,
-classifies page types, computes priority scores, and produces
+classifies page subtypes, computes priority scores, and produces
 a ranked list of pages for SEO optimization.
+
+Filtering is driven by ``seo.include_subtypes`` in config.yaml.
+Run the **analyze** step first to discover available subtypes.
 
 Output: output/seo/priority_ranked.csv
 """
 
-import glob
 import logging
 import re
 from pathlib import Path
 
 import pandas as pd
+
+from steps._classify import discover_subtypes, find_latest_csv
 
 logger = logging.getLogger(__name__)
 
@@ -21,20 +25,16 @@ logger = logging.getLogger(__name__)
 # ── Utility functions ────────────────────────────────────────────────
 
 
-def classify_sciencepedia_type(path: str) -> str:
-    """Classify a sciencepedia URL path into a page type.
+def classify_page_type(subtype: str, subtype_page_types: dict[str, str]) -> str:
+    """Map a subtype label to a page_type using the config-driven mapping.
 
-    Returns: 'course_article', 'keyword', 'agent_tool', or 'other'.
+    Args:
+        subtype: Auto-discovered subtype label (e.g. "feynman", "feynman/keyword").
+        subtype_page_types: Mapping from ``seo.subtype_page_types`` in config.yaml.
+
+    Returns: Page type string (e.g. 'course_article', 'keyword') or 'other'.
     """
-    clean = re.sub(r"^/en/", "/", path)
-
-    if "/agent-tools/" in clean:
-        return "agent_tool"
-    if "/feynman/keyword/" in clean:
-        return "keyword"
-    if "/feynman/" in clean:
-        return "course_article"
-    return "other"
+    return subtype_page_types.get(subtype, "other")
 
 
 def detect_language(path: str) -> str:
@@ -45,28 +45,14 @@ def detect_language(path: str) -> str:
 # ── Data loading ─────────────────────────────────────────────────────
 
 
-def _find_latest_csv(directory: Path, pattern: str) -> Path:
-    """Find the most recent CSV matching *pattern* inside *directory*.
-
-    Files are assumed to contain a date component in the name; the
-    lexicographically last match is treated as the newest file.
-    """
-    matches = sorted(glob.glob(str(directory / pattern)))
-    if not matches:
-        raise FileNotFoundError(
-            f"No CSV files matching '{pattern}' found in {directory}"
-        )
-    return Path(matches[-1])
-
-
 def load_and_merge_data(gsc_dir: Path) -> pd.DataFrame:
     """Load zero-click and ranking CSVs from *gsc_dir* and merge them.
 
     Returns a page-level DataFrame with columns from the ranking CSV
     plus ``top_queries`` (list[dict]) and ``query_count`` (int).
     """
-    zero_click_path = _find_latest_csv(gsc_dir, "query_page_zero_click_*.csv")
-    ranking_path = _find_latest_csv(gsc_dir, "ranking_pages_*.csv")
+    zero_click_path = find_latest_csv(gsc_dir, "query_page_zero_click_*.csv")
+    ranking_path = find_latest_csv(gsc_dir, "ranking_pages_*.csv")
 
     # Validate date consistency between the two CSVs
     zc_date = re.search(r"\d{4}-\d{2}-\d{2}", zero_click_path.name)
@@ -138,20 +124,37 @@ def compute_priority_scores(df: pd.DataFrame) -> pd.DataFrame:
 # ── Filtering & ranking ─────────────────────────────────────────────
 
 
-def filter_and_rank(df: pd.DataFrame) -> pd.DataFrame:
-    """Classify pages, filter to actionable types, score, and sort.
+def filter_and_rank(
+    df: pd.DataFrame,
+    include_subtypes: list[str] | None = None,
+    subtype_page_types: dict[str, str] | None = None,
+) -> pd.DataFrame:
+    """Classify pages, filter by config-driven subtypes, score, and sort.
 
-    Keeps: course_article, keyword (with query_count > 0).
-    Excludes: agent_tool, other.
+    Args:
+        df: Merged page-level DataFrame from :func:`load_and_merge_data`.
+        include_subtypes: Subtype labels to keep (from ``seo.include_subtypes``).
+            Empty list or ``None`` means keep all subtypes.
+        subtype_page_types: Mapping from subtype to page_type
+            (from ``seo.subtype_page_types``).
     """
+    if subtype_page_types is None:
+        subtype_page_types = {}
     df = df.copy()
-    df["seo_page_type"] = df["路径"].apply(classify_sciencepedia_type)
+    # Auto-discover subtypes from URL paths (same algorithm as analyze step)
+    df["subtype"] = discover_subtypes(df["路径"])
+    # Map subtype → seo_page_type via config (for Schema.org enhancement in optimize)
+    df["seo_page_type"] = df["subtype"].apply(
+        lambda s: classify_page_type(s, subtype_page_types)
+    )
     df["language"] = df["路径"].apply(detect_language)
 
-    mask = (
-        df["seo_page_type"].isin(["course_article", "keyword"])
-        & (df["query_count"] > 0)
-    )
+    # Build filter mask
+    mask = df["query_count"] > 0
+    if include_subtypes:
+        mask = mask & df["subtype"].isin(include_subtypes)
+        logger.info("Filtering to subtypes: %s", include_subtypes)
+
     filtered = df[mask].copy()
 
     filtered = compute_priority_scores(filtered)
@@ -164,6 +167,7 @@ def filter_and_rank(df: pd.DataFrame) -> pd.DataFrame:
 
 SAVE_COLUMNS = [
     "路径",
+    "subtype",
     "seo_page_type",
     "language",
     "priority_score",
@@ -179,8 +183,8 @@ def run(config: dict, output_dir: Path) -> dict:
     """Execute the ranking step.
 
     Args:
-        config: Parsed config.yaml contents.  Relevant keys live under
-                 ``seo.page_filter`` and ``seo.exclude_patterns``.
+        config: Parsed config.yaml contents.  Relevant keys:
+                 ``seo.include_subtypes`` — list of subtype labels to keep.
         output_dir: Root output directory (e.g. ``Path("output")``).
 
     Returns:
@@ -190,13 +194,21 @@ def run(config: dict, output_dir: Path) -> dict:
     seo_dir = output_dir / "seo"
     seo_dir.mkdir(parents=True, exist_ok=True)
 
+    seo_cfg = config.get("seo", {})
+    include_subtypes = seo_cfg.get("include_subtypes", [])
+    subtype_page_types = seo_cfg.get("subtype_page_types", {})
+
     # 1. Load and merge GSC data
     logger.info("Loading GSC data from %s", gsc_dir)
     data = load_and_merge_data(gsc_dir)
     logger.info("Loaded %d pages from ranking data", len(data))
 
     # 2-4. Classify, score, filter, rank
-    ranked = filter_and_rank(data)
+    ranked = filter_and_rank(
+        data,
+        include_subtypes=include_subtypes,
+        subtype_page_types=subtype_page_types,
+    )
     logger.info("After filtering: %d actionable pages", len(ranked))
 
     # 5. Save output
@@ -206,7 +218,7 @@ def run(config: dict, output_dir: Path) -> dict:
 
     # Build summary
     type_stats = (
-        ranked.groupby("seo_page_type")
+        ranked.groupby("subtype")
         .agg(
             count=("路径", "count"),
             avg_score=("priority_score", "mean"),

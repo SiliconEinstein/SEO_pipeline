@@ -150,7 +150,7 @@ async def _fetch_all(
         limit=concurrency, limit_per_host=concurrency,
     )
     headers = {
-        "User-Agent": "Mozilla/5.0 (compatible; SEOAuditBot/1.0; +https://bohrium.com)",
+        "User-Agent": f"Mozilla/5.0 (compatible; SEOAuditBot/1.0; +{base_url})",
         "Accept": "text/html",
         "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
     }
@@ -279,7 +279,9 @@ def run(config: dict, output_dir: Path) -> dict:
         ``{"output_files": [Path, ...], "summary": dict}``
     """
     seo_cfg = config.get("seo", {})
-    base_url: str = seo_cfg.get("base_url", "https://www.bohrium.com").rstrip("/")
+    if "base_url" not in seo_cfg:
+        raise ValueError("缺少必填配置 seo.base_url，请在 config.yaml 中设置")
+    base_url: str = seo_cfg["base_url"].rstrip("/")
     concurrency: int = int(seo_cfg.get("crawl_concurrency", 20))
 
     seo_dir = output_dir / "seo"

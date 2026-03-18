@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 import re
 from collections import Counter
 from collections import defaultdict
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # ── generic openers shared by both Chinese and English pages ──────────────
 GENERIC_OPENERS: list[str] = [
@@ -52,10 +55,10 @@ def _load_query_data(gsc_dir: Path) -> dict[str, list[dict]]:
     """
     candidates = sorted(gsc_dir.glob("query_page_zero_click_*.csv"))
     if not candidates:
-        print("  [audit] WARNING: no query_page_zero_click CSV found — skipping keyword checks")
+        logger.warning("No query_page_zero_click CSV found — skipping keyword checks")
         return {}
     csv_path = candidates[-1]  # most recent by filename (date-stamped)
-    print(f"  [audit] Using query CSV: {csv_path.name}")
+    logger.info("Using query CSV: %s", csv_path.name)
 
     page_queries: dict[str, list[dict]] = defaultdict(list)
     with open(csv_path, "r", encoding="utf-8-sig") as f:
@@ -70,15 +73,23 @@ def _load_query_data(gsc_dir: Path) -> dict[str, list[dict]]:
     return dict(page_queries)
 
 
-def _load_priority_ranks(seo_dir: Path) -> dict[str, int]:
-    """Load priority_ranked.csv → {path: 1-indexed rank}."""
+def _load_priority_ranked(seo_dir: Path) -> tuple[dict[str, int], dict[str, str]]:
+    """Load priority_ranked.csv → (ranks, page_types).
+
+    Returns:
+        ranks: {path: 1-indexed rank}
+        page_types: {path: seo_page_type}
+    """
     csv_path = seo_dir / "priority_ranked.csv"
     ranks: dict[str, int] = {}
+    page_types: dict[str, str] = {}
     with open(csv_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for i, row in enumerate(reader, 1):
-            ranks[row["路径"]] = i
-    return ranks
+            path = row["路径"]
+            ranks[path] = i
+            page_types[path] = row.get("seo_page_type", "other")
+    return ranks, page_types
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -106,15 +117,18 @@ def _check_language_mismatch(path: str, title: str, desc: str) -> bool:
 def _check_keyword_coverage(
     title: str,
     desc: str,
-    keywords: str,
     top_queries: list[dict],
     top_k: int = TOP_K_QUERIES,
 ) -> list[str]:
     """Return query strings from the top-k that are NOT covered
-    (< 60 % word-level match) in the combined text."""
+    (< 60 % word-level match) in title + description.
+
+    meta_keywords is intentionally excluded — Google has not used it
+    as a ranking signal since 2009.
+    """
     if not top_queries:
         return []
-    text = (title + " " + desc + " " + keywords).lower()
+    text = (title + " " + desc).lower()
     missing: list[str] = []
     for q in top_queries[:top_k]:
         query = q["query"].lower().strip()
@@ -127,8 +141,14 @@ def _check_keyword_coverage(
     return missing
 
 
-def _check_schema_completeness(path: str, schemas: list[dict]) -> list[str]:
-    """Return a list of schema issue labels."""
+def _check_schema_completeness(schemas: list[dict], page_type: str) -> list[str]:
+    """Return a list of schema issue labels.
+
+    Args:
+        schemas: JSON-LD schema objects from the page.
+        page_type: From ``seo_page_type`` column in priority_ranked.csv
+                   (config-driven, e.g. 'course_article', 'keyword', 'other').
+    """
     issues: list[str] = []
     if not schemas:
         issues.append("no_schema")
@@ -153,8 +173,7 @@ def _check_schema_completeness(path: str, schemas: list[dict]) -> list[str]:
             has_learning_resource = True
 
     # course_article pages should carry LearningResource
-    is_course_article = "/keyword/" not in path
-    if is_course_article and not has_learning_resource:
+    if page_type == "course_article" and not has_learning_resource:
         issues.append("course_missing_LearningResource")
 
     return issues
@@ -177,33 +196,31 @@ def run(config: dict, output_dir: Path) -> dict:
     seo_cfg = config.get("seo", {})
     max_title_len: int = seo_cfg.get("max_title_length", 60)
     max_desc_len: int = seo_cfg.get("max_desc_length", 155)
-    brand_suffix: str = seo_cfg.get("brand_suffix", " | SciencePedia")  # noqa: F841 — kept for future use
 
     seo_dir = output_dir / "seo"
     gsc_dir = output_dir / "gsc"
 
     # ── load data ──────────────────────────────────────────────────────
-    print("[Step 4] Loading data for audit …")
+    logger.info("Loading data for audit …")
     metadata = _load_metadata(seo_dir)
     query_data = _load_query_data(gsc_dir)
-    priority_ranks = _load_priority_ranks(seo_dir)
+    priority_ranks, page_types = _load_priority_ranked(seo_dir)
 
     total = len(metadata)
-    print(f"  Metadata pages : {total}")
-    print(f"  Query data     : {len(query_data)} pages with queries")
-    print(f"  Priority ranked: {len(priority_ranks)} pages")
+    logger.info("Metadata pages: %d", total)
+    logger.info("Query data: %d pages with queries", len(query_data))
+    logger.info("Priority ranked: %d pages", len(priority_ranks))
 
     # ── per-page audit ─────────────────────────────────────────────────
     issue_counts: Counter[str] = Counter()
     pages_with_issues = 0
     report_rows: list[dict] = []
 
-    print("  Running 6 detection rules …")
+    logger.info("Running 6 detection rules …")
 
     for path, meta in metadata.items():
         title = meta.get("title", "") or ""
         desc = meta.get("meta_description", "") or ""
-        keywords = meta.get("meta_keywords", "") or ""
         schemas = meta.get("schema_json_ld", []) or []
         rank = priority_ranks.get(path, 999)
 
@@ -238,14 +255,15 @@ def run(config: dict, output_dir: Path) -> dict:
 
         # 5. missing_keywords
         top_queries = query_data.get(path, [])
-        missing_kw = _check_keyword_coverage(title, desc, keywords, top_queries)
+        missing_kw = _check_keyword_coverage(title, desc, top_queries)
         if missing_kw:
             issues.append("missing_keywords")
             issue_counts["missing_keywords"] += 1
             missing_kw_str = " | ".join(missing_kw)
 
         # 6. schema issues
-        schema_issues = _check_schema_completeness(path, schemas)
+        page_type = page_types.get(path, "other")
+        schema_issues = _check_schema_completeness(schemas, page_type)
         if schema_issues:
             for si in schema_issues:
                 issues.append(f"schema:{si}")
@@ -288,7 +306,7 @@ def run(config: dict, output_dir: Path) -> dict:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(report_rows)
-    print(f"  Audit report saved: {report_csv}")
+    logger.info("Audit report saved: %s", report_csv)
 
     # ── build summary ──────────────────────────────────────────────────
     desc_lengths = [len((m.get("meta_description", "") or "")) for m in metadata.values()]
@@ -317,7 +335,7 @@ def run(config: dict, output_dir: Path) -> dict:
     summary_json = seo_dir / "audit_summary.json"
     with open(summary_json, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
-    print(f"  Audit summary saved: {summary_json}")
+    logger.info("Audit summary saved: %s", summary_json)
 
     # ── console summary ────────────────────────────────────────────────
     print()

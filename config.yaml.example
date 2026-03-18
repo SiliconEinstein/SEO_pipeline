@@ -38,6 +38,17 @@ seo:
   # 排除模式：路径包含这些字符串的页面会被跳过
   exclude_patterns: []                        # ← 如 ["admin", "test"]
 
+  # 要优化的子类型（对应 analyze 报告中自动发现的标签）
+  # 先运行 analyze 查看可选值；留空则处理全部子类型
+  include_subtypes: []                        # ← 如 ["feynman", "feynman/keyword"]
+
+  # subtype → page_type 映射（用于 Schema.org 增强和审计规则）
+  # page_type 决定 optimize 步骤的 Schema.org 增强策略：
+  #   course_article → 添加 LearningResource 类型
+  #   keyword        → 添加 DefinedTerm 语义
+  # 未映射的 subtype 默认为 "other"（不做 Schema.org 增强）
+  subtype_page_types: {}                      # ← 如 {"feynman": "course_article", "feynman/keyword": "keyword"}
+
 # --- LLM 优化配置 ---
 optimize:
   # litellm 模型名称（通过 LiteLLM Proxy 调用）

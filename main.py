@@ -4,6 +4,7 @@ SEO Pipeline — 统一 CLI 入口
 
 子命令:
     fetch    — 从 Google Search Console 拉取数据
+    analyze  — 全站数据分析报告
     rank     — 优先级排名
     crawl    — 抓取现有 SEO 元数据
     audit    — 质量审计
@@ -12,6 +13,7 @@ SEO Pipeline — 统一 CLI 入口
 
 使用方法:
     uv run python main.py fetch
+    uv run python main.py analyze
     uv run python main.py optimize --top 50
     uv run python main.py all
     uv run python main.py all --skip fetch
@@ -64,7 +66,7 @@ def _setup_logging(verbose: bool) -> None:
 # Step registry
 # ---------------------------------------------------------------------------
 
-STEPS = ["fetch", "rank", "crawl", "audit", "optimize"]
+STEPS = ["fetch", "analyze", "rank", "crawl", "audit", "optimize"]
 
 
 def _import_step(name: str):
@@ -76,6 +78,7 @@ def _import_step(name: str):
     """
     module_map = {
         "fetch": "fetch_gsc",
+        "analyze": "analyze",
         "rank": "rank",
         "crawl": "crawl",
         "audit": "audit",
@@ -118,6 +121,7 @@ def main(argv: list[str] | None = None) -> None:
         epilog="""
 示例:
   uv run python main.py fetch              # 仅拉取 GSC 数据
+  uv run python main.py analyze            # 全站数据分析
   uv run python main.py rank              # 仅排名
   uv run python main.py crawl             # 仅抓取元数据
   uv run python main.py audit             # 仅审计

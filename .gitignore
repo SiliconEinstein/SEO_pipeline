@@ -3,9 +3,6 @@ client_secret_*.json
 token.json
 
 
-# 运行配置（含站点凭据，不提交）
-config.yaml
-
 # 输出数据
 output/
 
