@@ -5,7 +5,7 @@ token.json
 
 # 输出数据
 output/
-
+*docs/
 # Python
 __pycache__/
 *.pyc
