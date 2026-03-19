@@ -358,6 +358,95 @@ def _postprocess_page(rewrite, ctx, seo_config):
 - 修改 Schema 白名单：改 `CONTENT_SCHEMA_TYPES` 集合。
 - 换 LLM 模型：改 `config.optimize.model`（通过 LiteLLM 支持 Claude / GPT-4 / Gemini 等）。
 
+### audit + optimize 优化行为详解
+
+#### audit（步骤 5）— 仅检测，不修改
+
+audit 不修改任何数据，只输出问题清单（`audit_report.csv`）供 optimize 消费。6 条检测规则均为硬编码：
+
+| 规则 | 检测逻辑 | 阈值/来源 |
+|------|---------|-----------|
+| `desc_too_long` | `len(desc) > max_desc_length` | 配置（默认 155） |
+| `title_too_long` | `len(title) > max_title_length` | 配置（默认 60） |
+| `generic_opening` | desc 以 "Explore/Learn/探索/学习..." 等开头 | 硬编码词表 |
+| `language_mismatch` | 非 `/en/` 路径但 title+desc 无中文字符 | 硬编码 |
+| `missing_keywords` | Top 3 查询词 < 60% 词级匹配 | 硬编码 `TOP_K=3, THRESHOLD=0.6` |
+| `schema:*` | 无 schema / 缺 datePublished / course_article 缺 LearningResource | 硬编码 |
+
+#### optimize（步骤 6）— LLM 与硬编码的分工
+
+**LLM 负责"写什么内容"，硬编码负责"放到哪里 + 格式合规"。**
+
+##### LLM 生成的字段（通过 prompt 模板控制）
+
+| LLM 输出字段 | 用途 |
+|-------------|------|
+| `title` | 新标题正文 |
+| `meta_description` | 新描述正文 |
+| `schema_term_name` | 核心术语名（→ Schema.org DefinedTerm.name） |
+| `schema_subject` | 所属学科名（→ DefinedTerm.inDefinedTermSet） |
+| `schema_course_name` | 所属课程名（仅 course_article，→ isPartOf.name） |
+
+LLM **不输出** `meta_keywords`、长度字段、OG/Twitter 标签 — 这些全由后处理硬编码控制。
+
+##### 后处理逐字段行为
+
+| 字段 | 来源 | 具体逻辑 |
+|------|------|---------|
+| `title` | LLM + 硬编码 | LLM 生成 → `_ensure_brand_suffix` 确保以 `brand_suffix` 结尾 → 超长时 `_smart_truncate` 在词/句边界截断 |
+| `meta_description` | LLM + 硬编码 | LLM 生成 → 超过 `max_desc_length` 时 `_smart_truncate` 截断 |
+| `meta_keywords` | 硬编码 | 直接置空 `""`（Google 不使用此信号） |
+| `og_title` | 硬编码 | = 处理后的 title |
+| `og_description` | 硬编码 | = 处理后的 description |
+| `og_url` | 硬编码 | = `base_url + path` |
+| `og_type` | 硬编码 | 保留原值，无原值时默认 `"article"` |
+| `twitter_title` | 硬编码 | = 处理后的 title |
+| `twitter_description` | 硬编码 | = 处理后的 description |
+| `schema_json_ld` | LLM + 硬编码 | 见下方 Schema.org 增强 |
+| 其他字段 | 不修改 | `canonical`、`alternates`、`meta_robots`、`og_image`、`h1` 等从原始 metadata 深拷贝 |
+
+##### Schema.org 增强细节（`_enhance_schema`）
+
+白名单过滤 → 仅修改内容型 schema（`CONTENT_SCHEMA_TYPES`），结构型 schema（BreadcrumbList、WebSite、Organization）完全不动。
+
+对白名单内的 schema：
+
+| 操作 | 条件 | 值来源 |
+|------|------|--------|
+| `headline` = title 去品牌后缀 | 所有内容型 schema | 硬编码（从处理后 title 截取） |
+| `description` = desc | 所有内容型 schema | 硬编码（同步） |
+| `@type` 追加 `"LearningResource"` | `page_type == "course_article"` | 硬编码 |
+| `isPartOf = {Course, name}` | `page_type == "course_article"` 且 LLM 提供了 `schema_course_name` | name 由 LLM 提供，结构硬编码 |
+| `about = {DefinedTerm, name, inDefinedTermSet}` | page_type 为 course_article 或 keyword，且 LLM 提供了 `term_name` + `subject` | 值由 LLM 提供，结构硬编码 |
+| `dateModified` | **不修改** | 刻意不动（pipeline 只改 meta 不改内容） |
+
+不会做的事：不凭空创建 schema、不伪造日期、不修改结构型 schema、不修改 canonical/hreflang/robots。
+
+##### 长度控制的双重保障
+
+| 层 | 机制 | 目的 |
+|---|------|------|
+| LLM prompt | 要求 title ≤ 60、desc ≤ 155 | 让 LLM **尽量**生成合规内容 |
+| 后处理硬编码 | `_ensure_brand_suffix` + `_smart_truncate` | **兜底**截断，确保最终输出不超标 |
+
+后处理记录截断统计（`title_truncated_count` / `desc_truncated_count`），可观测 LLM 遵守长度约束的比率。
+
+#### Schema.org 背景知识
+
+Schema.org 是 Google/Bing/Yahoo 共同制定的结构化数据词汇表，用 JSON-LD 格式嵌入 HTML `<script type="application/ld+json">` 标签中，用户不可见但搜索引擎可读。作用是让搜索引擎精确理解页面内容类型，从而展示**富摘要（Rich Snippet）**提升 CTR。
+
+本项目涉及的类型层级：
+
+```
+Thing → CreativeWork（内容型，本项目会修改）
+         ├── Article
+         ├── WebPage
+         ├── LearningResource（教学资源）
+         └── Course（课程）
+      → DefinedTerm（术语定义）
+      → Organization / WebSite / BreadcrumbList（结构型，本项目不动）
+```
+
 ## 数据流与列名对照
 
 ### ranking_pages CSV（fetch 输出）
