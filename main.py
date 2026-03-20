@@ -9,7 +9,8 @@ SEO Pipeline — 统一 CLI 入口
     crawl    — 抓取现有 SEO 元数据
     audit    — 质量审计
     optimize — LLM 重写 SEO 元数据
-    all      — 按顺序执行全部 (可用 --skip 跳过某步)
+    evaluate — 评估优化效果 (需 --deploy-date 进行 GSC 对比)
+    all      — 按顺序执行全部 (可用 --skip 跳过某步, 不含 evaluate)
 
 使用方法:
     uv run python main.py fetch
@@ -83,6 +84,7 @@ def _import_step(name: str):
         "crawl": "crawl",
         "audit": "audit",
         "optimize": "optimize",
+        "evaluate": "evaluate",
     }
     if name not in module_map:
         raise ValueError(f"Unknown step: {name}")
@@ -127,6 +129,8 @@ def main(argv: list[str] | None = None) -> None:
   uv run python main.py audit             # 仅审计
   uv run python main.py optimize          # LLM 优化 Top 30
   uv run python main.py optimize --top 50 # LLM 优化 Top 50
+  uv run python main.py evaluate          # 评估元数据质量
+  uv run python main.py evaluate --deploy-date 2026-03-20  # 含 GSC 对比
   uv run python main.py all               # 执行全部步骤
   uv run python main.py all --skip fetch  # 跳过 fetch
 """,
@@ -134,8 +138,8 @@ def main(argv: list[str] | None = None) -> None:
 
     parser.add_argument(
         "command",
-        choices=STEPS + ["all"],
-        help="要执行的步骤 (或 'all' 执行全部)",
+        choices=STEPS + ["all", "evaluate"],
+        help="要执行的步骤 (或 'all' 执行全部, 'evaluate' 评估效果)",
     )
     parser.add_argument(
         "--config",
@@ -165,6 +169,12 @@ def main(argv: list[str] | None = None) -> None:
         "--range", type=str, help="optimize: 排名范围如 31-60 (覆盖 config.yaml)"
     )
 
+    # evaluate 步骤专用参数
+    parser.add_argument(
+        "--deploy-date", type=str,
+        help="evaluate: 优化部署日期 (如 2026-03-20), 用于 GSC 前后对比",
+    )
+
     args = parser.parse_args(argv)
     _setup_logging(args.verbose)
 
@@ -176,6 +186,10 @@ def main(argv: list[str] | None = None) -> None:
         config.setdefault("optimize", {})["top"] = args.top
     if getattr(args, "range", None):
         config.setdefault("optimize", {})["range"] = args.range
+
+    # Inject evaluate CLI overrides
+    if getattr(args, "deploy_date", None):
+        config.setdefault("evaluate", {})["deploy_date"] = args.deploy_date
 
     output_dir = Path(config.get("output_dir", "output"))
     output_dir.mkdir(parents=True, exist_ok=True)

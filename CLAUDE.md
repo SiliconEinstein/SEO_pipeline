@@ -12,7 +12,8 @@ main.py                    CLI 入口，调度所有步骤
   ├── steps/rank.py        排名筛选（依赖 _classify.py）
   ├── steps/crawl.py       异步 HTTP 抓取
   ├── steps/audit.py       规则检测
-  └── steps/optimize.py    LLM 调用 + 后处理
+  ├── steps/optimize.py    LLM 调用 + 后处理
+  └── steps/evaluate.py    趋势跟踪 + 效果评估（依赖 _classify.py）
 ```
 
 每个步骤模块暴露 `run(config: dict, output_dir: Path) -> dict` 函数。返回值包含 `output_files`（文件路径列表）和 `summary`（摘要字典）。步骤之间通过文件传递数据，无内存依赖。
@@ -447,6 +448,68 @@ Thing → CreativeWork（内容型，本项目会修改）
       → Organization / WebSite / BreadcrumbList（结构型，本项目不动）
 ```
 
+## steps/evaluate.py — 效果评估
+
+evaluate 独立于 `all` 命令之外，需要单独运行。包含两个独立分析，由不同条件触发。
+
+### 趋势分析（始终运行）
+
+只要 `daily_pages_*.csv` 存在就运行，不依赖 `--deploy-date`。
+
+```python
+def _compute_trends(daily_df, optimized_paths=None):
+    # 1. 对 daily CSV 中所有唯一路径调用 discover_subtypes()
+    #    注意：在唯一路径上调用一次，再 merge 回完整 df
+    # 2. 按日期聚合两个层级：
+    #    - overall: 全部页面
+    #    - per-subtype: 每个子类型
+    # 3. 如有 optimized_paths，额外计算 _optimized_ 板块
+    # 指标：总点击、总展示、加权CTR（=总点击/总展示）、平均排名、页面数
+```
+
+CTR 使用**加权计算**（总点击 / 总展示），不是各页面 CTR 的算术平均。这确保高展示量页面获得更大权重。
+
+### 可视化
+
+```python
+def _plot_trends(seo_dir, trends, deploy_date=None):
+    # 2×2 子图：点击、展示、加权CTR、平均排名
+    # overall 粗线 + 各子类型细线 + _optimized_ 红色虚线
+    # 排名图 Y 轴反转（数值小 = 排名好 → 画在上方）
+    # deploy_date 画灰色竖线
+    # _MIN_DATAPOINTS = 10：过滤掉数据点不足的小板块，避免噪声
+```
+
+matplotlib 中文显示通过 `font.sans-serif` 配置 PingFang SC / Microsoft YaHei 等字体。
+
+### 优化前后对比（需 --deploy-date）
+
+```python
+def _evaluate_gsc_performance(daily_df, deploy_date, optimized_paths):
+    # 1. 筛选 optimized_paths 对应的页面（来自 optimized_metadata.json 的 key）
+    # 2. 按 deploy_date 分为 before / after 两个窗口
+    # 3. 每个窗口按页面聚合，计算日均点击/展示
+    # 4. inner join → 计算 ΔCTR / Δ点击 / Δ展示 / Δ排名
+    # 5. 输出 top improved / declined + 聚合统计
+```
+
+### 输出文件
+
+| 文件 | 触发条件 | 内容 |
+|------|---------|------|
+| `trend_report.csv` | daily CSV 存在 | 逐日分板块指标，板块列值为 `_overall_` / 子类型标签 / `_optimized_` |
+| `trend_chart.png` | daily CSV 存在 | 2×2 趋势图 |
+| `evaluation_report.csv` | 始终输出 | 优化页面逐页前后对比（无数据时为空占位） |
+| `evaluation_summary.json` | 始终输出 | `trends`（时间序列）+ `stats`（前后对比聚合）的合并 JSON |
+
+`trend_report.csv` 和 `evaluation_summary.json` 的趋势数据内容相同、格式不同（CSV 供人/Excel 消费，JSON 供程序消费），是有意的冗余。
+
+**修改点：**
+- 修改趋势指标：改 `_compute_trends()` 的 `_agg_daily()` 聚合逻辑。
+- 修改图表样式：改 `_plot_trends()` 的 matplotlib 代码，`_MIN_DATAPOINTS` 控制小板块过滤阈值。
+- 修改前后对比逻辑：改 `_evaluate_gsc_performance()` 的 delta 计算。
+- 新增输出列：在 `_write_trend_csv()` 的 `fieldnames` 和行构建中添加。
+
 ## 数据流与列名对照
 
 ### ranking_pages CSV（fetch 输出）
@@ -474,6 +537,30 @@ Thing → CreativeWork（内容型，本项目会修改）
 | `排名` | 该查询词的排名 |
 | `页面总展示` | 该页面所有查询词展示总和 |
 | `页面总点击` | 该页面总点击（= 0） |
+
+### daily_pages CSV（fetch 输出）
+
+| 列名 | 含义 |
+|------|------|
+| `日期` | 日期 |
+| `路径` | URL 路径 |
+| `点击` | 当天点击数 |
+| `展示` | 当天展示数 |
+| `CTR` | 当天点击率 |
+| `平均排名` | 当天平均排名 |
+| `页面类型` | 大类 |
+
+### trend_report CSV（evaluate 输出）
+
+| 列名 | 含义 | 示例 |
+|------|------|------|
+| `日期` | 日期 | `2026-03-10` |
+| `板块` | 分组标签 | `_overall_` / `sciencepedia/feynman` / `_optimized_` |
+| `点击` | 当日总点击 | `56` |
+| `展示` | 当日总展示 | `13315` |
+| `平均CTR` | 加权 CTR（= 点击/展示） | `0.004206` |
+| `平均排名` | 各页面平均排名 | `7.05` |
+| `页面数` | 当日有数据的页面数 | `569` |
 
 ### priority_ranked CSV（rank 输出）
 

@@ -488,12 +488,56 @@ def run(config: dict, output_dir: Path) -> dict:
     else:
         logger.info("No pages after filtering; skipping ranking CSV.")
 
+    # --- 3) daily pages report (for evaluate step) ----------------------
+    logger.info("Fetching date x page data ...")
+    df_dp = _fetch_search_analytics(
+        service, site_url, start_date, end_date, ["date", "page"]
+    )
+    logger.info("Fetched %d date x page rows.", len(df_dp))
+
+    daily_path = gsc_dir / f"daily_pages_{filter_tag}_{end_date}.csv"
+    if not df_dp.empty:
+        df_daily = df_dp.copy()
+        origin = _site_url_to_origin(site_url, base_url)
+        df_daily["路径"] = df_daily["page"].str.replace(origin, "", regex=False)
+        df_daily["页面类型"] = df_daily["路径"].apply(classify_page_type)
+
+        # Apply page_filter
+        if page_filter:
+            df_daily = df_daily[
+                df_daily["路径"].str.contains(page_filter, case=False)
+            ].copy()
+
+        # Exclude patterns
+        for pat in exclude_patterns:
+            df_daily = df_daily[
+                ~df_daily["路径"].str.contains(pat, case=False)
+            ].copy()
+
+        df_daily = df_daily.rename(columns={
+            "date": "日期",
+            "clicks": "点击",
+            "impressions": "展示",
+            "ctr": "CTR",
+            "position": "平均排名",
+        })
+        df_daily = df_daily[
+            ["日期", "路径", "点击", "展示", "CTR", "平均排名", "页面类型"]
+        ].sort_values(["日期", "路径"])
+
+        df_daily.to_csv(daily_path, index=False, encoding="utf-8-sig")
+        output_files.append(daily_path)
+        logger.info("Daily pages report: %s (%d rows)", daily_path, len(df_daily))
+    else:
+        logger.info("No date x page data found; skipping daily CSV.")
+
     # --- summary --------------------------------------------------------
     summary: dict = {
         "site_url": site_url,
         "date_range": f"{start_date} ~ {end_date}",
         "total_query_page_rows": len(df_qp),
         "total_page_rows": len(df_page),
+        "daily_page_rows": len(df_dp),
         "zero_click_report_rows": len(zero_report),
         "ranking_report_rows": len(ranked),
         "filter": filter_tag,

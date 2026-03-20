@@ -76,6 +76,7 @@ uv run python main.py rank
 uv run python main.py crawl
 uv run python main.py audit
 uv run python main.py optimize
+uv run python main.py evaluate
 
 # optimize 专用参数
 uv run python main.py optimize --top 10          # 只优化 Top 10
@@ -92,17 +93,20 @@ fetch ──→ analyze ──→ rank ──→ crawl ──→ audit ──→
   │          │          │         │         │          │
   │          │          │         │         │          ▼
   │          │          │         │         │     optimized_metadata.json
-  │          │          │         │         ▼
-  │          │          │         │     audit_report.csv
-  │          │          │         ▼
-  │          │          │     existing_metadata.json
-  │          │          ▼
-  │          │     priority_ranked.csv
-  │          ▼
-  │     site_analysis.csv/json
-  ▼
-ranking_pages_*.csv
-query_page_zero_click_*.csv
+  │          │          │         │         ▼          │
+  │          │          │         │     audit_report.csv │
+  │          │          │         ▼                     │
+  │          │          │     existing_metadata.json    │
+  │          │          ▼                               │
+  │          │     priority_ranked.csv                  │
+  │          ▼                                         │
+  │     site_analysis.csv/json     evaluate ◄──────────┘
+  ▼                                    │
+ranking_pages_*.csv                    ▼
+query_page_zero_click_*.csv       trend_report.csv
+daily_pages_*.csv                 trend_chart.png
+                                  evaluation_report.csv
+                                  evaluation_summary.json
 ```
 
 ### 各步骤说明
@@ -199,6 +203,32 @@ query_page_zero_click_*.csv
 
 > **换站点提示：** `templates/rewrite-prompt.md` 中的平台名称和品牌后缀是硬编码的，换站点时需要手动修改，与 `config.yaml` 中的 `seo.brand_suffix` 保持一致。
 
+---
+
+#### 7. evaluate — 效果评估
+
+跟踪 GSC 指标变化趋势，评估优化效果。包含两个独立分析：
+
+- **趋势分析**（无需 `--deploy-date`）：按 `discover_subtypes` 分板块的逐日点击、展示、加权 CTR、平均排名
+- **优化前后对比**（需 `--deploy-date`）：优化页面在部署前后的指标变化
+
+| | |
+|---|---|
+| **输入** | `output/gsc/daily_pages_*.csv`（fetch 输出），`output/seo/optimized_metadata.json`（optimize 输出） |
+| **输出** | `output/seo/trend_report.csv` — 逐日分板块指标 |
+| | `output/seo/trend_chart.png` — 2×2 趋势图（点击、展示、CTR、排名） |
+| | `output/seo/evaluation_report.csv` — 优化页面逐页前后对比 |
+| | `output/seo/evaluation_summary.json` — 完整评估数据 |
+| **配置** | `evaluate.deploy_date`（或 CLI `--deploy-date`） |
+
+```bash
+# 仅看趋势（不需要 deploy-date）
+uv run python main.py evaluate
+
+# 同时看趋势 + 优化前后对比
+uv run python main.py evaluate --deploy-date 2026-03-10
+```
+
 ## 配置参考
 
 | 配置项 | 默认值 | 说明 |
@@ -233,6 +263,10 @@ query_page_zero_click_*.csv
 | audit | `output/seo/audit_summary.json` | JSON | 问题聚合统计 |
 | optimize | `output/seo/optimized_metadata.json` | JSON | 优化后的元数据（可部署） |
 | optimize | `output/seo/original_metadata_backup.json` | JSON | 原始元数据备份 |
+| evaluate | `output/seo/trend_report.csv` | CSV | 逐日分板块指标（总体 + 各子类型 + 已优化） |
+| evaluate | `output/seo/trend_chart.png` | PNG | 2×2 趋势可视化图表 |
+| evaluate | `output/seo/evaluation_report.csv` | CSV | 优化页面逐页前后对比 |
+| evaluate | `output/seo/evaluation_summary.json` | JSON | 完整评估数据（趋势 + 对比统计） |
 
 ## 项目结构
 
@@ -246,7 +280,8 @@ query_page_zero_click_*.csv
 │   ├── rank.py             # Step 3: 优先级排名
 │   ├── crawl.py            # Step 4: 元数据抓取
 │   ├── audit.py            # Step 5: 质量审计
-│   └── optimize.py         # Step 6: LLM 重写
+│   ├── optimize.py         # Step 6: LLM 重写
+│   └── evaluate.py         # Step 7: 效果评估
 ├── templates/
 │   └── rewrite-prompt.md   # LLM prompt 模板
 ├── config.yaml.example     # 配置模板
