@@ -506,6 +506,17 @@ def _evaluate_gsc_performance(daily_df, deploy_date, optimized_paths):
 
 `trend_report.csv` 和 `evaluation_summary.json` 的趋势数据内容相同、格式不同（CSV 供人/Excel 消费，JSON 供程序消费），是有意的冗余。
 
+### `--deploy-date` 参数的影响
+
+`--deploy-date` 是优化元数据部署上线的日期，控制 `_evaluate_gsc_performance()` 是否运行。趋势分析始终运行（只要 daily CSV 存在），不受此参数影响。
+
+| 输出 | 不加 `--deploy-date` | 加 `--deploy-date` |
+|------|---------------------|-------------------|
+| `trend_report.csv` | 有 | 有 |
+| `trend_chart.png` | 有 | 有（额外画部署日期灰色竖线） |
+| `evaluation_report.csv` | 空占位 | 优化页面逐页 before/after 对比 |
+| `evaluation_summary.json` | 仅含 `trends` | 含 `trends` + `stats` + `top_improved` 等 |
+
 **修改点：**
 - 修改趋势指标：改 `_compute_trends()` 的 `_agg_daily()` 聚合逻辑。
 - 修改图表样式：改 `_plot_trends()` 的 matplotlib 代码，`_MIN_DATAPOINTS` 控制小板块过滤阈值。

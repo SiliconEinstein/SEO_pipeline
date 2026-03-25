@@ -221,11 +221,20 @@ daily_pages_*.csv                 trend_chart.png
 | | `output/seo/evaluation_summary.json` — 完整评估数据 |
 | **配置** | `evaluate.deploy_date`（或 CLI `--deploy-date`） |
 
+`--deploy-date` 是优化元数据部署上线的日期，用于界定"优化前"和"优化后"的分界点。加与不加的区别：
+
+| 输出 | 不加 `--deploy-date` | 加 `--deploy-date` |
+|------|---------------------|-------------------|
+| `trend_report.csv` | 有 | 有 |
+| `trend_chart.png` | 有 | 有（额外标记部署日期竖线） |
+| `evaluation_report.csv` | 空占位 | 优化页面逐页 before/after 对比 |
+| `evaluation_summary.json` | 仅含 `trends` | 含 `trends` + `stats`（聚合对比统计） |
+
 ```bash
 # 仅看趋势（不需要 deploy-date）
 uv run python main.py evaluate
 
-# 同时看趋势 + 优化前后对比
+# 同时看趋势 + 优化前后对比（日期为优化部署上线日）
 uv run python main.py evaluate --deploy-date 2026-03-10
 ```
 
