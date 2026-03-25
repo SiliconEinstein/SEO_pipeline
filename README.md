@@ -94,11 +94,11 @@ fetch ──→ analyze ──→ rank ──→ crawl ──→ audit ──→
   │          │          │         │         │          ▼
   │          │          │         │         │     optimized_metadata.json
   │          │          │         │         ▼          │
-  │          │          │         │     audit_report.csv │
-  │          │          │         ▼                     │
-  │          │          │     existing_metadata.json    │
-  │          │          ▼                               │
-  │          │     priority_ranked.csv                  │
+  │          │          │         │   audit_report.csv │
+  │          │          │         ▼                    │
+  │          │          │    existing_metadata.json    │
+  │          │          ▼                              │
+  │          │     priority_ranked.csv                 │
   │          ▼                                         │
   │     site_analysis.csv/json     evaluate ◄──────────┘
   ▼                                    │
