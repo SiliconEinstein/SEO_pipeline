@@ -12,20 +12,23 @@ import copy
 import csv
 import glob
 import json
+import logging
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
 import litellm
 from dotenv import load_dotenv
 
+logger = logging.getLogger(__name__)
+
 load_dotenv()
 
 
 # ---------------------------------------------------------------------------
 # 1. Data preparation
-# Inlined from .claude/skills/seo-optimize/scripts/prepare_contexts.py (2026-03-16)
 # ---------------------------------------------------------------------------
 
 
@@ -124,12 +127,18 @@ def _build_contexts(pages, audit, metadata, query_data, skipped):
             "page_type": p.get("seo_page_type", ""),
             "language": p.get("language", ""),
             "avg_position": float(p.get("平均排名", 0)),
+            "priority_score": float(p.get("priority_score", 0)),
+            "subtype": p.get("subtype", ""),
         })
     return contexts
 
 
-def _prepare_contexts(config: dict, output_dir: Path) -> str:
-    """Run full data preparation, write batch files. Return tmp_dir path."""
+def _prepare_contexts(config: dict, output_dir: Path) -> tuple[str, dict]:
+    """Run full data preparation and write batch files.
+
+    Returns:
+        (tmp_dir, prep_summary)
+    """
     opt_config = config.get("optimize", {})
     seo_dir = str(output_dir / "seo")
     tmp_dir = os.path.join(seo_dir, "tmp")
@@ -139,19 +148,79 @@ def _prepare_contexts(config: dict, output_dir: Path) -> str:
     range_str = opt_config.get("range")
     top = opt_config.get("top", 30)
     start, end = _parse_range(range_str, top)
+    requested = end - start
     batch_size = opt_config.get("batch_size", 10)
 
-    # Clean old batch input files (preserve _result files for resume)
+    # Clean all old batch files (inputs + results) to prevent stale
+    # results from a previous run with different parameters being reused.
     for old in glob.glob(os.path.join(tmp_dir, "seo_batch_*.json")):
-        if "_result" not in old:
-            os.remove(old)
+        os.remove(old)
 
-    # Load data
-    pages = _load_priority_ranked(f"{seo_dir}/priority_ranked.csv", start, end)
+    # Lance: 查询近期已优化的 URL
+    lance_config = config.get("lance", {})
+    recent_paths: set[str] = set()
+    if lance_config.get("enabled"):
+        try:
+            from ._lance import LanceStore
+            store = LanceStore(lance_config)
+            days = lance_config.get("skip_recent_days", 30)
+            recent_paths = store.get_recently_optimized(days)
+            if recent_paths:
+                print(f"  Lance: {len(recent_paths)} 个 URL 近{days}天内已优化")
+        except Exception as e:
+            logger.warning("Lance 查询失败，继续无历史优化: %s", e)
+
+    # Load data — 如果用 --top 且有 Lance 过滤，加载全部再取 top N
+    selected_before_lance = 0
+    selected_after_lance = 0
+
+    if recent_paths and not range_str:
+        # --top 模式：加载全部页面，过滤后取前 N
+        all_ranked_pages = _load_priority_ranked(
+            f"{seo_dir}/priority_ranked.csv", 0, float("inf")
+        )
+        selected_before_lance = len(all_ranked_pages)
+        all_pages = [p for p in all_ranked_pages if p["路径"] not in recent_paths]
+        selected_after_lance = len(all_pages)
+        pages = all_pages[start:start + requested]
+        skipped_count = len(recent_paths)
+        if skipped_count:
+            print(f"  跳过已优化 URL 后，从排名列表中选取 top {len(pages)}")
+    else:
+        # --range 模式或无 Lance：按原逻辑加载指定范围
+        pages = _load_priority_ranked(
+            f"{seo_dir}/priority_ranked.csv", start, end
+        )
+        selected_before_lance = len(pages)
+        selected_after_lance = len(pages)
+        if recent_paths:
+            before = len(pages)
+            pages = [p for p in pages if p["路径"] not in recent_paths]
+            selected_after_lance = len(pages)
+            skipped_by_lance = before - len(pages)
+            if skipped_by_lance:
+                print(f"  跳过 (近期已优化): {skipped_by_lance} 页")
+
     if not pages:
-        raise RuntimeError("没有找到目标页面，请检查范围参数")
-    if len(pages) < (end - start):
-        print(f"  警告: 请求 {end - start} 个页面，实际只有 {len(pages)} 个")
+        if (
+            recent_paths
+            and selected_before_lance > 0
+            and selected_after_lance == 0
+        ):
+            days = lance_config.get("skip_recent_days", 30)
+            print(f"  [optimize] 跳过: 目标 URL 均在近{days}天已优化列表中")
+            return tmp_dir, {
+                "skipped": True,
+                "reason": "all targets recently optimized",
+                "requested_pages": requested,
+                "selected_pages": 0,
+                "selection_mode": "range" if range_str else "top",
+            }
+        if range_str:
+            raise RuntimeError(f"范围 {range_str} 内没有找到目标页面，请检查范围参数")
+        raise RuntimeError(f"没有找到目标页面，请检查 top 参数 (当前 top={top})")
+    if not recent_paths and len(pages) < requested:
+        print(f"  警告: 请求 {requested} 个页面，实际只有 {len(pages)} 个")
 
     paths = [p["路径"] for p in pages]
     target_set = set(paths)
@@ -160,8 +229,11 @@ def _prepare_contexts(config: dict, output_dir: Path) -> str:
     audit = _load_audit_report(f"{seo_dir}/audit_report.csv", target_set)
     metadata, skipped = _load_metadata(f"{seo_dir}/existing_metadata.json", paths)
     gsc_dir = str(output_dir / "gsc")
+    seo_cfg = config.get("seo", {})
+    page_filter = seo_cfg.get("page_filter", "")
+    filter_tag = page_filter.strip("/").replace("/", "_") if page_filter else "all"
     query_data = _load_zero_click_queries(
-        f"{gsc_dir}/query_page_zero_click_*.csv", target_set
+        f"{gsc_dir}/query_page_zero_click_{filter_tag}_*.csv", target_set
     )
 
     print(
@@ -196,7 +268,11 @@ def _prepare_contexts(config: dict, output_dir: Path) -> str:
         json.dump(original_meta, f, ensure_ascii=False, indent=2)
 
     print(f"  上下文准备完成: {len(contexts)} 页, {num_batches} 批")
-    return tmp_dir
+    return tmp_dir, {
+        "requested_pages": requested,
+        "selected_pages": len(pages),
+        "selection_mode": "range" if range_str else "top",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -254,7 +330,7 @@ async def _rewrite_one_batch(
 async def _rewrite_batches(
     tmp_dir: str, prompt_template: str, config: dict
 ) -> list[tuple]:
-    """Process all batches with concurrency control and resume support."""
+    """Process all batches with concurrency control."""
     opt = config.get("optimize", {})
     sem = asyncio.Semaphore(opt.get("concurrency", 3))
     batch_files = sorted(glob.glob(os.path.join(tmp_dir, "seo_batch_*.json")))
@@ -493,7 +569,9 @@ def _merge_with_existing(output_path: str, new_data: dict) -> dict:
     return new_data
 
 
-def _postprocess_all(rewritten, tmp_dir, seo_config, output_dir):
+def _postprocess_all(
+    rewritten, tmp_dir, seo_config, output_dir, *, config=None, prompt_template=None
+):
     """Run post-processing on all rewritten pages. Return (output_files, summary)."""
     with open(
         os.path.join(tmp_dir, "seo_rewrite_contexts.json"), "r", encoding="utf-8"
@@ -551,6 +629,38 @@ def _postprocess_all(rewritten, tmp_dir, seo_config, output_dir):
     with open(backup_path, "w", encoding="utf-8") as f:
         json.dump(original_backup, f, ensure_ascii=False, indent=2)
 
+    # Lance: 写入优化历史
+    lance_config = (config or {}).get("lance", {})
+    if lance_config.get("enabled") and optimized:
+        try:
+            from ._lance import LanceStore
+            store = LanceStore(lance_config)
+            template_hash = store.save_prompt_template(prompt_template or "")
+            records = []
+            for path, opt in optimized.items():
+                ctx = ctx_lookup.get(path, {})
+                orig = original_metadata.get(path, {})
+                records.append({
+                    "path": path,
+                    "optimized_at": datetime.now(timezone.utc),
+                    "template_hash": template_hash,
+                    "context_json": json.dumps(ctx, ensure_ascii=False),
+                    "original_title": orig.get("title", ""),
+                    "optimized_title": opt.get("title", ""),
+                    "original_description": orig.get("meta_description", ""),
+                    "optimized_description": opt.get("meta_description", ""),
+                    "audit_issues": json.dumps(
+                        ctx.get("issues", []), ensure_ascii=False
+                    ),
+                    "priority_score": float(ctx.get("priority_score", 0)),
+                    "subtype": ctx.get("subtype", ""),
+                    "model": (config or {}).get("optimize", {}).get("model", ""),
+                })
+            store.record_optimizations(records)
+            print(f"  Lance 历史已记录: {len(records)} 条")
+        except Exception as e:
+            logger.warning("Lance 写入失败: %s", e)
+
     # Print summary
     print(f"  处理页数: {total}, 跳过: {len(skipped)}")
     if issues_fixed:
@@ -605,7 +715,9 @@ def run(config: dict, output_dir: Path) -> dict:
 
     # 1. Prepare contexts
     print("  [1/4] 准备重写上下文...")
-    tmp_dir = _prepare_contexts(config, output_dir)
+    tmp_dir, prep_summary = _prepare_contexts(config, output_dir)
+    if prep_summary.get("skipped"):
+        return {"output_files": [], "summary": prep_summary}
 
     # 2. Load prompt and call API
     print("  [2/4] 调用 LLM API 重写...")
@@ -644,12 +756,14 @@ def run(config: dict, output_dir: Path) -> dict:
     # 4. Post-process
     print("  [4/4] 后处理...")
     output_files, pp_summary = _postprocess_all(
-        rewritten, tmp_dir, seo_config, output_dir
+        rewritten, tmp_dir, seo_config, output_dir,
+        config=config, prompt_template=prompt_template,
     )
 
     return {
         "output_files": output_files,
         "summary": {
+            **prep_summary,
             "batches_succeeded": succeeded,
             "batches_failed": failed,
             **pp_summary,

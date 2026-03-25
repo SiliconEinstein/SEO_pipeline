@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from steps._classify import discover_subtypes, find_latest_csv
+from steps._classify import discover_subtypes, find_latest_csv, get_filter_tag
 
 logger = logging.getLogger(__name__)
 
@@ -45,14 +45,27 @@ def detect_language(path: str) -> str:
 # ── Data loading ─────────────────────────────────────────────────────
 
 
-def load_and_merge_data(gsc_dir: Path) -> pd.DataFrame:
+def load_and_merge_data(gsc_dir: Path, filter_tag: str = "all") -> pd.DataFrame:
     """Load zero-click and ranking CSVs from *gsc_dir* and merge them.
 
     Returns a page-level DataFrame with columns from the ranking CSV
     plus ``top_queries`` (list[dict]) and ``query_count`` (int).
+
+    If the zero-click CSV is missing (no zero-click pages found by fetch),
+    ranking data is returned with empty query columns.
     """
-    zero_click_path = find_latest_csv(gsc_dir, "query_page_zero_click_*.csv")
-    ranking_path = find_latest_csv(gsc_dir, "ranking_pages_*.csv")
+    ranking_path = find_latest_csv(gsc_dir, f"ranking_pages_{filter_tag}_*.csv")
+    logger.info("Loading ranking data from %s", ranking_path)
+    ranking = pd.read_csv(ranking_path, encoding="utf-8-sig")
+
+    # Zero-click CSV is optional — fetch skips it when no zero-click pages exist
+    try:
+        zero_click_path = find_latest_csv(gsc_dir, f"query_page_zero_click_{filter_tag}_*.csv")
+    except FileNotFoundError:
+        logger.warning("零点击 CSV 不存在，跳过查询词合并")
+        ranking["top_queries"] = [[] for _ in range(len(ranking))]
+        ranking["query_count"] = 0
+        return ranking
 
     # Validate date consistency between the two CSVs
     zc_date = re.search(r"\d{4}-\d{2}-\d{2}", zero_click_path.name)
@@ -66,10 +79,12 @@ def load_and_merge_data(gsc_dir: Path) -> pd.DataFrame:
         )
 
     logger.info("Loading zero-click data from %s", zero_click_path)
-    logger.info("Loading ranking data from %s", ranking_path)
-
-    ranking = pd.read_csv(ranking_path, encoding="utf-8-sig")
     zero_click = pd.read_csv(zero_click_path, encoding="utf-8-sig")
+    if zero_click.empty:
+        logger.warning("零点击 CSV 为空，跳过查询词合并")
+        ranking["top_queries"] = [[] for _ in range(len(ranking))]
+        ranking["query_count"] = 0
+        return ranking
 
     # Build per-page query lists from zero-click data
     queries_by_page = (
@@ -149,8 +164,12 @@ def filter_and_rank(
     )
     df["language"] = df["路径"].apply(detect_language)
 
-    # Build filter mask
-    mask = df["query_count"] > 0
+    # Build filter mask — only require query_count > 0 when zero-click data exists
+    has_any_queries = df["query_count"].sum() > 0
+    if has_any_queries:
+        mask = df["query_count"] > 0
+    else:
+        mask = pd.Series(True, index=df.index)
     if include_subtypes:
         mask = mask & df["subtype"].isin(include_subtypes)
         logger.info("Filtering to subtypes: %s", include_subtypes)
@@ -199,8 +218,9 @@ def run(config: dict, output_dir: Path) -> dict:
     subtype_page_types = seo_cfg.get("subtype_page_types", {})
 
     # 1. Load and merge GSC data
+    tag = get_filter_tag(config)
     logger.info("Loading GSC data from %s", gsc_dir)
-    data = load_and_merge_data(gsc_dir)
+    data = load_and_merge_data(gsc_dir, filter_tag=tag)
     logger.info("Loaded %d pages from ranking data", len(data))
 
     # 2-4. Classify, score, filter, rank

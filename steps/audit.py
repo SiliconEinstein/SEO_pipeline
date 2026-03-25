@@ -25,6 +25,8 @@ from collections import Counter
 from collections import defaultdict
 from pathlib import Path
 
+from steps._classify import get_filter_tag
+
 logger = logging.getLogger(__name__)
 
 # ── generic openers shared by both Chinese and English pages ──────────────
@@ -49,11 +51,11 @@ def _load_metadata(seo_dir: Path) -> dict:
         return json.load(f)
 
 
-def _load_query_data(gsc_dir: Path) -> dict[str, list[dict]]:
-    """Find the most recent query_page_zero_click_*.csv in *gsc_dir* and
+def _load_query_data(gsc_dir: Path, filter_tag: str = "all") -> dict[str, list[dict]]:
+    """Find the most recent query_page_zero_click CSV in *gsc_dir* and
     return ``{path: [{query, impressions}, …]}`` sorted by impressions desc.
     """
-    candidates = sorted(gsc_dir.glob("query_page_zero_click_*.csv"))
+    candidates = sorted(gsc_dir.glob(f"query_page_zero_click_{filter_tag}_*.csv"))
     if not candidates:
         logger.warning("No query_page_zero_click CSV found — skipping keyword checks")
         return {}
@@ -203,7 +205,8 @@ def run(config: dict, output_dir: Path) -> dict:
     # ── load data ──────────────────────────────────────────────────────
     logger.info("Loading data for audit …")
     metadata = _load_metadata(seo_dir)
-    query_data = _load_query_data(gsc_dir)
+    tag = get_filter_tag(config)
+    query_data = _load_query_data(gsc_dir, filter_tag=tag)
     priority_ranks, page_types = _load_priority_ranked(seo_dir)
 
     total = len(metadata)

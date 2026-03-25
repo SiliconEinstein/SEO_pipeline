@@ -3,14 +3,15 @@
 SEO Pipeline — 统一 CLI 入口
 
 子命令:
-    fetch    — 从 Google Search Console 拉取数据
-    analyze  — 全站数据分析报告
-    rank     — 优先级排名
-    crawl    — 抓取现有 SEO 元数据
-    audit    — 质量审计
-    optimize — LLM 重写 SEO 元数据
-    evaluate — 评估优化效果 (需 --deploy-date 进行 GSC 对比)
-    all      — 按顺序执行全部 (可用 --skip 跳过某步, 不含 evaluate)
+    fetch      — 从 Google Search Console 拉取数据
+    analyze    — 全站数据分析报告
+    rank       — 优先级排名
+    crawl      — 抓取现有 SEO 元数据
+    audit      — 质量审计
+    optimize   — LLM 重写 SEO 元数据
+    evaluate   — 评估优化效果 (需 --deploy-date 进行 GSC 对比)
+    all        — 按顺序执行全部 (可用 --skip 跳过某步, 不含 evaluate)
+    init-lance — 在 TOS 上创建 Lance 表 (首次使用 Lance 前运行一次)
 
 使用方法:
     uv run python main.py fetch
@@ -29,10 +30,6 @@ import sys
 import time
 from pathlib import Path
 
-# Ensure imports work regardless of how the script is invoked:
-#   - `python main.py` from within seo_pipeline/ (standard usage)
-#   - `python seo_pipeline/main.py` from the parent directory
-#   - the directory being renamed (e.g. `seo-pipeline/`)
 _PIPELINE_DIR = str(Path(__file__).resolve().parent)
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent)
 for _p in (_PIPELINE_DIR, _PROJECT_ROOT):
@@ -133,13 +130,14 @@ def main(argv: list[str] | None = None) -> None:
   uv run python main.py evaluate --deploy-date 2026-03-20  # 含 GSC 对比
   uv run python main.py all               # 执行全部步骤
   uv run python main.py all --skip fetch  # 跳过 fetch
+  uv run python main.py init-lance        # 创建 Lance 表 (首次)
 """,
     )
 
     parser.add_argument(
         "command",
-        choices=STEPS + ["all", "evaluate"],
-        help="要执行的步骤 (或 'all' 执行全部, 'evaluate' 评估效果)",
+        choices=STEPS + ["all", "evaluate", "init-lance"],
+        help="要执行的步骤 (或 'all' 执行全部, 'evaluate' 评估效果, 'init-lance' 创建 Lance 表)",
     )
     parser.add_argument(
         "--config",
@@ -182,9 +180,11 @@ def main(argv: list[str] | None = None) -> None:
     config = _load_config(args.config)
 
     # Inject optimize CLI overrides
-    if getattr(args, "top", None):
+    if args.top is not None:
+        if args.top <= 0:
+            parser.error("--top 必须为正整数")
         config.setdefault("optimize", {})["top"] = args.top
-    if getattr(args, "range", None):
+    if args.range is not None:
         config.setdefault("optimize", {})["range"] = args.range
 
     # Inject evaluate CLI overrides
@@ -196,6 +196,20 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"Config: {args.config}")
     print(f"Output: {output_dir}")
+
+    # Handle init-lance separately
+    if args.command == "init-lance":
+        lance_config = config.get("lance", {})
+        if not lance_config.get("enabled"):
+            print("错误: lance.enabled 未开启，请在 config.yaml 中设置 lance.enabled: true")
+            sys.exit(1)
+        from dotenv import load_dotenv
+        load_dotenv()
+        from steps._lance import LanceStore
+        store = LanceStore(lance_config)
+        store.create_tables()
+        print("Lance 表初始化完成")
+        return
 
     # Determine which steps to run
     if args.command == "all":

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from steps._classify import discover_subtypes, find_latest_csv
+from steps._classify import discover_subtypes, find_latest_csv, get_filter_tag
 
 logger = logging.getLogger(__name__)
 
@@ -242,14 +242,15 @@ def run(config: dict, output_dir: Path) -> dict:
     analyze_dir = output_dir / "analyze"
     analyze_dir.mkdir(parents=True, exist_ok=True)
 
-    # Load CSVs
-    ranking_path = find_latest_csv(gsc_dir, "ranking_pages_*.csv")
+    # Load CSVs — use filter_tag to match the correct fetch output
+    tag = get_filter_tag(config)
+    ranking_path = find_latest_csv(gsc_dir, f"ranking_pages_{tag}_*.csv")
 
     logger.info("Loading ranking data from %s", ranking_path)
     ranking = pd.read_csv(ranking_path, encoding="utf-8-sig")
 
     try:
-        zero_click_path = find_latest_csv(gsc_dir, "query_page_zero_click_*.csv")
+        zero_click_path = find_latest_csv(gsc_dir, f"query_page_zero_click_{tag}_*.csv")
         logger.info("Loading zero-click data from %s", zero_click_path)
         zero_click = pd.read_csv(zero_click_path, encoding="utf-8-sig")
     except FileNotFoundError:

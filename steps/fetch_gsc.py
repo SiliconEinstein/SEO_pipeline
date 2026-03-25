@@ -51,10 +51,9 @@ RANKING_BINS: list[tuple[int, int, str]] = [
 # Project-root resolver
 # ---------------------------------------------------------------------------
 
-#: Credentials are resolved relative to the current working directory,
-#: so the user should run commands from the project root (seo_pipeline/).
-def _cwd() -> Path:
-    return Path.cwd()
+def _project_root() -> Path:
+    """Return the project root (parent of steps/)."""
+    return Path(__file__).resolve().parent.parent
 
 
 # ===================================================================== #
@@ -321,8 +320,10 @@ def _build_zero_click_report(
     for pat in exclude_patterns:
         df = df[~df["路径"].str.contains(pat, case=False)].copy()
 
+    _ZERO_CLICK_COLUMNS = ["路径", "查询词", "展示", "排名", "页面总展示", "页面总点击"]
+
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_ZERO_CLICK_COLUMNS)
 
     # Per-page totals
     totals = (
@@ -335,7 +336,7 @@ def _build_zero_click_report(
     # Zero-click pages only
     zero = df[df["页面总点击"] == 0].copy()
     if zero.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=_ZERO_CLICK_COLUMNS)
 
     result = (
         zero.sort_values("impressions", ascending=False)
@@ -409,10 +410,10 @@ def run(config: dict, output_dir: Path) -> dict:
     page_filter: str | None = seo_cfg.get("page_filter")
     exclude_patterns: list[str] = [p for p in seo_cfg.get("exclude_patterns", []) if p]
 
-    # --- resolve credential paths relative to working directory ---------
+    # --- resolve credential paths relative to project root --------------
     cred_rel = config["credentials_file"]
-    credentials_file = str(_cwd() / cred_rel)
-    token_file = str(_cwd() / "token.json")
+    credentials_file = str(_project_root() / cred_rel)
+    token_file = str(_project_root() / "token.json")
 
     # --- authenticate ---------------------------------------------------
     logger.info("Authenticating with Google Search Console ...")
@@ -454,12 +455,14 @@ def run(config: dict, output_dir: Path) -> dict:
         df_qp, site_url, page_filter, exclude_patterns, base_url=base_url
     )
     zero_path = gsc_dir / f"query_page_zero_click_{filter_tag}_{end_date}.csv"
-    if not zero_report.empty:
-        zero_report.to_csv(zero_path, index=False, encoding="utf-8-sig")
-        output_files.append(zero_path)
-        logger.info("Zero-click report: %s (%d rows)", zero_path, len(zero_report))
+    # Always write the CSV (even if empty) so downstream steps pick up this
+    # date-stamped file instead of a stale one from a previous run.
+    zero_report.to_csv(zero_path, index=False, encoding="utf-8-sig")
+    output_files.append(zero_path)
+    if zero_report.empty:
+        logger.info("No zero-click pages found; wrote empty CSV: %s", zero_path)
     else:
-        logger.info("No zero-click pages found; skipping zero-click CSV.")
+        logger.info("Zero-click report: %s (%d rows)", zero_path, len(zero_report))
 
     # --- 2) ranking pages report ----------------------------------------
     ranked = _add_ranking_labels(df_page, site_url, base_url)
@@ -480,13 +483,15 @@ def run(config: dict, output_dir: Path) -> dict:
 
     ranking_path = gsc_dir / f"ranking_pages_{filter_tag}_{end_date}.csv"
     if not ranked.empty:
-        ranked.sort_values("展示", ascending=False).to_csv(
-            ranking_path, index=False, encoding="utf-8-sig"
-        )
-        output_files.append(ranking_path)
-        logger.info("Ranking report: %s (%d rows)", ranking_path, len(ranked))
+        ranked = ranked.sort_values("展示", ascending=False)
+    # Always write the CSV (even if empty) so downstream steps pick up this
+    # date-stamped file instead of a stale one from a previous run.
+    ranked.to_csv(ranking_path, index=False, encoding="utf-8-sig")
+    output_files.append(ranking_path)
+    if ranked.empty:
+        logger.info("No pages after filtering; wrote empty CSV: %s", ranking_path)
     else:
-        logger.info("No pages after filtering; skipping ranking CSV.")
+        logger.info("Ranking report: %s (%d rows)", ranking_path, len(ranked))
 
     # --- 3) daily pages report (for evaluate step) ----------------------
     logger.info("Fetching date x page data ...")
@@ -496,6 +501,7 @@ def run(config: dict, output_dir: Path) -> dict:
     logger.info("Fetched %d date x page rows.", len(df_dp))
 
     daily_path = gsc_dir / f"daily_pages_{filter_tag}_{end_date}.csv"
+    _DAILY_COLUMNS = ["日期", "路径", "点击", "展示", "CTR", "平均排名", "页面类型"]
     if not df_dp.empty:
         df_daily = df_dp.copy()
         origin = _site_url_to_origin(site_url, base_url)
@@ -521,15 +527,17 @@ def run(config: dict, output_dir: Path) -> dict:
             "ctr": "CTR",
             "position": "平均排名",
         })
-        df_daily = df_daily[
-            ["日期", "路径", "点击", "展示", "CTR", "平均排名", "页面类型"]
-        ].sort_values(["日期", "路径"])
-
-        df_daily.to_csv(daily_path, index=False, encoding="utf-8-sig")
-        output_files.append(daily_path)
-        logger.info("Daily pages report: %s (%d rows)", daily_path, len(df_daily))
+        df_daily = df_daily[_DAILY_COLUMNS].sort_values(["日期", "路径"])
     else:
-        logger.info("No date x page data found; skipping daily CSV.")
+        df_daily = pd.DataFrame(columns=_DAILY_COLUMNS)
+
+    # Always write (even if empty) so downstream steps don't read stale data.
+    df_daily.to_csv(daily_path, index=False, encoding="utf-8-sig")
+    output_files.append(daily_path)
+    if df_daily.empty:
+        logger.info("No daily page data after filtering; wrote empty CSV: %s", daily_path)
+    else:
+        logger.info("Daily pages report: %s (%d rows)", daily_path, len(df_daily))
 
     # --- summary --------------------------------------------------------
     summary: dict = {
@@ -537,7 +545,10 @@ def run(config: dict, output_dir: Path) -> dict:
         "date_range": f"{start_date} ~ {end_date}",
         "total_query_page_rows": len(df_qp),
         "total_page_rows": len(df_page),
-        "daily_page_rows": len(df_dp),
+        # Filtered rows actually written to daily_pages CSV.
+        "daily_page_rows": len(df_daily),
+        # Raw rows returned by GSC date×page API before local path filtering.
+        "daily_page_rows_raw": len(df_dp),
         "zero_click_report_rows": len(zero_report),
         "ranking_report_rows": len(ranked),
         "filter": filter_tag,

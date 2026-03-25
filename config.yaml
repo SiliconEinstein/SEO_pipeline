@@ -35,5 +35,14 @@ optimize:
   timeout: 120
   max_retries: 2
 
+# --- Lance 优化历史（TOS 对象存储） ---
+lance:
+  enabled: true
+  skip_recent_days: 30
+  tos:
+    endpoint: "tos-s3-cn-beijing.volces.com"
+    bucket: "datainfra-test"
+    base_path: "science_pedia/SEO"
+
 # --- 输出目录 ---
 output_dir: "output"

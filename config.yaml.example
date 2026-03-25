@@ -78,5 +78,16 @@ optimize:
   # 单 batch 失败重试次数
   max_retries: 2
 
+# --- Lance 优化历史（TOS 对象存储） ---
+# 启用后，optimize 会跳过近期已优化的 URL，并将优化记录存入 Lance 表
+# 需要在 .env 中配置 TOS_ACCESS_KEY 和 TOS_SECRET_KEY
+lance:
+  enabled: false                                    # ← 配好 TOS 凭证后改为 true
+  skip_recent_days: 30                              # 跳过近 N 天内已优化的 URL
+  tos:
+    endpoint: "tos-s3-cn-beijing.volces.com"        # TOS S3 兼容端点
+    bucket: "datainfra-test"                        # ← 改成你的桶名
+    base_path: "science_pedia/SEO"                  # ← 改成你的桶内路径
+
 # --- 输出目录 ---
 output_dir: "output"

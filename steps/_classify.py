@@ -8,6 +8,12 @@ from pathlib import Path
 import pandas as pd
 
 
+def get_filter_tag(config: dict) -> str:
+    """Derive the filename filter tag from config, matching fetch_gsc logic."""
+    page_filter = config.get("seo", {}).get("page_filter", "")
+    return page_filter.strip("/").replace("/", "_") if page_filter else "all"
+
+
 def find_latest_csv(directory: Path, pattern: str) -> Path:
     """Find the most recent CSV matching *pattern* inside *directory*.
 

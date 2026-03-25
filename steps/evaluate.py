@@ -18,7 +18,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from steps._classify import discover_subtypes, find_latest_csv
+from steps._classify import discover_subtypes, find_latest_csv, get_filter_tag
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,10 @@ logger = logging.getLogger(__name__)
 # Data loaders
 # ══════════════════════════════════════════════════════════════════════════
 
-def _load_daily_csv(gsc_dir: Path) -> pd.DataFrame | None:
+def _load_daily_csv(gsc_dir: Path, filter_tag: str = "all") -> pd.DataFrame | None:
     """Load the most recent daily_pages_*.csv, or return None."""
     try:
-        csv_path = find_latest_csv(gsc_dir, "daily_pages_*.csv")
+        csv_path = find_latest_csv(gsc_dir, f"daily_pages_{filter_tag}_*.csv")
     except FileNotFoundError:
         return None
     logger.info("Using daily CSV: %s", csv_path.name)
@@ -452,7 +452,11 @@ def _write_report_csv(seo_dir: Path, gsc_perf: dict | None) -> Path:
     return report_path
 
 
-def _print_console_report(gsc_perf: dict | None, trends: dict | None) -> None:
+def _print_console_report(
+    gsc_perf: dict | None,
+    trends: dict | None,
+    trend_skip_reason: str | None = None,
+) -> None:
     """Print a human-readable console summary."""
     print()
     print(f"{'=' * 60}")
@@ -504,7 +508,10 @@ def _print_console_report(gsc_perf: dict | None, trends: dict | None) -> None:
                 print(f"    avg CTR          : {opt_ctr:.4f}")
     else:
         print()
-        print("  (no daily CSV — trend analysis skipped)")
+        if trend_skip_reason == "empty_csv":
+            print("  (daily_pages CSV is empty — trend analysis skipped)")
+        else:
+            print("  (no daily CSV — trend analysis skipped)")
 
     # ── GSC before/after comparison ────────────────────────────────
     print()
@@ -582,11 +589,13 @@ def run(config: dict, output_dir: Path) -> dict:
     output_files: list[Path] = []
 
     # ── Load daily CSV (shared by trends and GSC comparison) ──────
-    daily_df = _load_daily_csv(gsc_dir)
+    tag = get_filter_tag(config)
+    daily_df = _load_daily_csv(gsc_dir, filter_tag=tag)
     optimized_paths = _load_optimized_paths(seo_dir)
 
     # ── Trend analysis (always runs when daily CSV exists) ────────
     trends: dict | None = None
+    trend_skip_reason: str | None = None
     if daily_df is not None and not daily_df.empty:
         trends = _compute_trends(
             daily_df,
@@ -600,7 +609,12 @@ def run(config: dict, output_dir: Path) -> dict:
         output_files.append(trend_png)
         logger.info("Trend chart saved: %s", trend_png)
     else:
-        logger.warning("No daily_pages CSV found — run 'fetch' first to generate daily data")
+        if daily_df is None:
+            logger.warning("No daily_pages CSV found — run 'fetch' first to generate daily data")
+            trend_skip_reason = "missing_csv"
+        else:
+            logger.warning("daily_pages CSV is empty — trend analysis skipped")
+            trend_skip_reason = "empty_csv"
 
     # ── GSC before/after comparison (requires --deploy-date) ──────
     gsc_perf: dict | None = None
@@ -622,24 +636,38 @@ def run(config: dict, output_dir: Path) -> dict:
     output_files.append(report_csv)
     logger.info("Evaluation report saved: %s", report_csv)
 
-    # ── Build summary ──────────────────────────────────────────────
-    summary: dict = {}
+    # ── Build full summary (for JSON file) ───────────────────────────
+    full_summary: dict = {}
     if trends:
-        summary["trends"] = trends
+        full_summary["trends"] = trends
     if gsc_perf:
         perf_summary = {k: v for k, v in gsc_perf.items() if k != "page_rows"}
-        summary["deploy_date"] = perf_summary.pop("deploy_date", deploy_date)
-        summary["stats"] = perf_summary.pop("stats", {})
-        summary.update(perf_summary)
+        full_summary["deploy_date"] = perf_summary.pop("deploy_date", deploy_date)
+        full_summary["stats"] = perf_summary.pop("stats", {})
+        full_summary.update(perf_summary)
 
     # ── Write evaluation_summary.json ──────────────────────────────
     summary_json = seo_dir / "evaluation_summary.json"
     with open(summary_json, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+        json.dump(full_summary, f, ensure_ascii=False, indent=2)
     output_files.append(summary_json)
     logger.info("Evaluation summary saved: %s", summary_json)
 
     # ── Console report ─────────────────────────────────────────────
-    _print_console_report(gsc_perf, trends)
+    _print_console_report(gsc_perf, trends, trend_skip_reason=trend_skip_reason)
 
-    return {"output_files": output_files, "summary": summary}
+    # ── CLI summary (aggregated only, no time-series arrays) ───────
+    cli_summary: dict = {}
+    if trends:
+        overall = trends.get("overall", {})
+        n_days = len(overall.get("dates", []))
+        n_subtypes = len(trends.get("by_subtype", {}))
+        cli_summary["trend_days"] = n_days
+        cli_summary["subtypes_tracked"] = n_subtypes
+        if n_days:
+            cli_summary["date_range"] = f"{overall['dates'][0]} ~ {overall['dates'][-1]}"
+    if gsc_perf:
+        cli_summary["deploy_date"] = full_summary.get("deploy_date", deploy_date)
+        cli_summary["stats"] = full_summary.get("stats", {})
+
+    return {"output_files": output_files, "summary": cli_summary}
