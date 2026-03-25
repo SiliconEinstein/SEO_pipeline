@@ -212,6 +212,8 @@ daily_pages_*.csv                 trend_chart.png
 - **趋势分析**（无需 `--deploy-date`）：按 `discover_subtypes` 分板块的逐日点击、展示、加权 CTR、平均排名
 - **优化前后对比**（需 `--deploy-date`）：优化页面在部署前后的指标变化
 
+> **数据粒度：** 趋势图和 `trend_report.csv` 中的所有指标均为**每日值（daily）**，不是累计值。每个数据点代表当天的表现：点击 = 当天总点击数，展示 = 当天总展示数，加权 CTR = 当天总点击/总展示，页面数 = 当天有展示数据的唯一页面数。
+
 | | |
 |---|---|
 | **输入** | `output/gsc/daily_pages_*.csv`（fetch 输出），`output/seo/optimized_metadata.json`（optimize 输出） |
