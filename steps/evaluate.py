@@ -81,14 +81,17 @@ def _compute_trends(daily_df: pd.DataFrame, optimized_paths: set[str] | None = N
             impressions=("展示", "sum"),
             avg_position=("平均排名", "mean"),
             page_count=("路径", "nunique"),
+            ctr_std=("CTR", "std"),
         ).sort_index()
         # 加权 CTR = 总点击 / 总展示
         agg["avg_ctr"] = (agg["clicks"] / agg["impressions"]).fillna(0)
+        agg["ctr_std"] = agg["ctr_std"].fillna(0)
         return {
             "dates": [d.strftime("%Y-%m-%d") for d in agg.index],
             "clicks": [int(v) for v in agg["clicks"]],
             "impressions": [int(v) for v in agg["impressions"]],
             "avg_ctr": [round(v, 6) for v in agg["avg_ctr"]],
+            "ctr_std": [round(v, 6) for v in agg["ctr_std"]],
             "avg_position": [round(v, 2) for v in agg["avg_position"]],
             "page_count": [int(v) for v in agg["page_count"]],
         }
@@ -162,8 +165,12 @@ def _write_trend_csv(seo_dir: Path, trends: dict) -> Path:
 #: Minimum data points for a subtype to appear on charts.
 _MIN_DATAPOINTS = 10
 
+#: Subtypes to exclude from the CTR ±1σ subplot (too few pages, noisy std).
+_CTR_CHART_EXCLUDE = {"sciencepedia", "sciencepedia/agent-tools", "总体"}
+
 #: Chinese labels for chart display.
 _METRIC_LABELS = {
+    "page_count": "有展示页面数",
     "clicks": "点击",
     "impressions": "展示",
     "avg_ctr": "加权 CTR",
@@ -172,7 +179,9 @@ _METRIC_LABELS = {
 
 
 def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) -> Path:
-    """Generate a 2×2 trend chart (clicks, impressions, CTR, position).
+    """Generate a 3+2 trend chart (page_count, clicks, impressions, CTR, position).
+
+    Layout: 3 rows × 2 columns, last cell left empty.
 
     Parameters
     ----------
@@ -194,8 +203,8 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
         "axes.unicode_minus": False,
     })
 
-    metrics = ["clicks", "impressions", "avg_ctr", "avg_position"]
-    fig, axes = plt.subplots(2, 2, figsize=(16, 10), sharex=True)
+    metrics = ["page_count", "impressions", "clicks", "avg_ctr", "avg_position"]
+    fig, axes = plt.subplots(3, 2, figsize=(16, 14), sharex=True)
     axes = axes.flatten()
 
     # Collect series: overall, subtypes (with enough data), _optimized_
@@ -204,7 +213,9 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
     overall = trends["overall"]
     series.append(("总体", overall, {"linewidth": 2.5, "color": "#1f77b4", "zorder": 10}))
 
-    # Subtypes sorted by total impressions (descending)
+    # Subtypes sorted by total impressions (descending), with fixed colors
+    _SUBTYPE_COLORS = ["#ff7f0e", "#2ca02c", "#9467bd", "#8c564b",
+                       "#e377c2", "#7f7f7f", "#bcbd22", "#17becf"]
     subtypes = {
         k: v for k, v in trends["by_subtype"].items()
         if k != "_optimized_" and len(v["dates"]) >= _MIN_DATAPOINTS
@@ -214,8 +225,9 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
         key=lambda kv: sum(kv[1]["impressions"]),
         reverse=True,
     )
-    for label, data in sorted_subs:
-        series.append((label, data, {"linewidth": 1.2, "alpha": 0.8}))
+    for i, (label, data) in enumerate(sorted_subs):
+        color = _SUBTYPE_COLORS[i % len(_SUBTYPE_COLORS)]
+        series.append((label, data, {"linewidth": 1.2, "alpha": 0.8, "color": color}))
 
     # Optimised pages
     if "_optimized_" in trends["by_subtype"]:
@@ -225,7 +237,7 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
                 "linewidth": 2, "linestyle": "--", "color": "#d62728", "zorder": 9,
             }))
 
-    for ax, metric in zip(axes, metrics):
+    for ax, metric in zip(axes[:len(metrics)], metrics):
         for label, data, style in series:
             dates = pd.to_datetime(data["dates"])
             values = data[metric]
@@ -243,6 +255,29 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
             deploy_dt = pd.to_datetime(deploy_date)
             ax.axvline(deploy_dt, color="gray", linestyle=":", linewidth=1, alpha=0.7)
 
+    # 6th subplot: CTR with ±1σ error bands (exclude noisy boards)
+    import numpy as np
+
+    ax_ctr = axes[-1]
+    for label, data, style in series:
+        if label in _CTR_CHART_EXCLUDE:
+            continue
+        dates = pd.to_datetime(data["dates"])
+        ctr = np.array(data["avg_ctr"])
+        line = ax_ctr.plot(dates, ctr, label=label, **style)
+        if "ctr_std" in data:
+            std = np.array(data["ctr_std"])
+            color = line[0].get_color()
+            ax_ctr.fill_between(dates,
+                                np.maximum(ctr - std, 0),
+                                ctr + std,
+                                color=color, alpha=0.1)
+    ax_ctr.set_ylabel("CTR (±1σ)")
+    ax_ctr.grid(True, alpha=0.3)
+    if deploy_date:
+        ax_ctr.axvline(pd.to_datetime(deploy_date),
+                       color="gray", linestyle=":", linewidth=1, alpha=0.7)
+
     # Single legend at bottom
     handles, labels = axes[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc="lower center", ncol=min(len(labels), 5),
@@ -256,6 +291,7 @@ def _plot_trends(seo_dir: Path, trends: dict, deploy_date: str | None = None) ->
     fig.savefig(out_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
     return out_path
+
 
 
 # ══════════════════════════════════════════════════════════════════════════

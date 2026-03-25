@@ -216,7 +216,7 @@ daily_pages_*.csv                 trend_chart.png
 |---|---|
 | **输入** | `output/gsc/daily_pages_*.csv`（fetch 输出），`output/seo/optimized_metadata.json`（optimize 输出） |
 | **输出** | `output/seo/trend_report.csv` — 逐日分板块指标 |
-| | `output/seo/trend_chart.png` — 2×2 趋势图（点击、展示、CTR、排名） |
+| | `output/seo/trend_chart.png` — 3×2 趋势图（页面数、展示、点击、CTR、排名、CTR±1σ） |
 | | `output/seo/evaluation_report.csv` — 优化页面逐页前后对比 |
 | | `output/seo/evaluation_summary.json` — 完整评估数据 |
 | **配置** | `evaluate.deploy_date`（或 CLI `--deploy-date`） |
@@ -264,7 +264,7 @@ uv run python main.py evaluate --deploy-date 2026-03-10
 | optimize | `output/seo/optimized_metadata.json` | JSON | 优化后的元数据（可部署） |
 | optimize | `output/seo/original_metadata_backup.json` | JSON | 原始元数据备份 |
 | evaluate | `output/seo/trend_report.csv` | CSV | 逐日分板块指标（总体 + 各子类型 + 已优化） |
-| evaluate | `output/seo/trend_chart.png` | PNG | 2×2 趋势可视化图表 |
+| evaluate | `output/seo/trend_chart.png` | PNG | 3×2 趋势可视化图表 |
 | evaluate | `output/seo/evaluation_report.csv` | CSV | 优化页面逐页前后对比 |
 | evaluate | `output/seo/evaluation_summary.json` | JSON | 完整评估数据（趋势 + 对比统计） |
 
