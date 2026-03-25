@@ -31,6 +31,10 @@ cp .env.example .env
 ```
 LITELLM_PROXY_API_BASE=https://your-litellm-proxy.example.com
 LITELLM_PROXY_API_KEY=sk-xxx
+
+# 优化历史（Lance on TOS），不配则自动关闭历史功能
+TOS_ACCESS_KEY=
+TOS_SECRET_KEY=
 ```
 
 ### 3. OAuth 凭证
@@ -41,6 +45,28 @@ LITELLM_PROXY_API_KEY=sk-xxx
 首次运行 `fetch` 时会弹出浏览器完成授权，token 自动缓存。
 
 ## 使用方法
+
+### 命令总览
+
+`main.py` 提供以下命令：
+
+| 命令 | 说明 | 包含在 `all` 中 |
+|------|------|:---:|
+| `fetch` | 从 GSC 拉取搜索数据 | Yes |
+| `analyze` | 按子类型维度分析数据 | Yes |
+| `rank` | 按优化价值排序页面 | Yes |
+| `crawl` | 异步抓取页面现有元数据 | Yes |
+| `audit` | 规则检测元数据问题 | Yes |
+| `optimize` | LLM 批量重写元数据 | Yes |
+| `evaluate` | 趋势跟踪 + 效果评估 | **No** — 需单独运行 |
+| `init-lance` | 在 TOS 上创建 Lance 表 | **No** — 仅首次运行一次 |
+| `all` | 按顺序执行上述 6 个步骤 | — |
+
+`all` = fetch → analyze → rank → crawl → audit → optimize，可用 `--skip` 跳过其中任意步骤。
+
+`evaluate` 不在 `all` 中，因为它是部署后的回溯分析，运行时机与 pipeline 主流程不同。
+
+`init-lance` 不在 `all` 中，因为它是一次性的初始化操作，只需在首次启用 Lance 时运行。
 
 ### 推荐流程：先分析再优化
 
@@ -61,7 +87,7 @@ uv run python main.py all --skip fetch analyze
 ### 常用命令
 
 ```bash
-# 完整 pipeline（6 步全跑）
+# 完整 pipeline（依次执行 fetch → analyze → rank → crawl → audit → optimize）
 uv run python main.py all
 
 # 跳过某些步骤
@@ -69,18 +95,22 @@ uv run python main.py all --skip fetch          # 已有 GSC 数据
 uv run python main.py all --skip fetch analyze   # 已有数据且已分析
 uv run python main.py all --skip optimize        # 只检测不优化
 
-# 单步运行
+# 单步运行（all 包含的 6 个步骤均可单独执行）
 uv run python main.py fetch
 uv run python main.py analyze
 uv run python main.py rank
 uv run python main.py crawl
 uv run python main.py audit
 uv run python main.py optimize
-uv run python main.py evaluate
 
-# optimize 专用参数
+# optimize 专用参数（--top 和 --range 互斥）
 uv run python main.py optimize --top 10          # 只优化 Top 10
 uv run python main.py optimize --range 31-60     # 增量优化排名 31-60
+
+# 不在 all 中的独立命令
+uv run python main.py init-lance                 # 创建 Lance 表（首次启用 Lance 时运行一次）
+uv run python main.py evaluate                   # 趋势分析（部署后运行）
+uv run python main.py evaluate --deploy-date 2026-03-20  # 趋势 + 优化前后对比
 
 # 调试
 uv run python main.py fetch -v                   # 详细日志
@@ -113,131 +143,56 @@ daily_pages_*.csv                 trend_chart.png
 
 #### 1. fetch — 拉取 GSC 数据
 
-从 Google Search Console API 拉取搜索分析数据。
+从 Google Search Console API 拉取页面级排名数据和零点击查询词数据。`seo.page_filter` 控制范围：设为 `"sciencepedia"` 则只拉取路径含 sciencepedia 的页面。首次运行会弹出浏览器完成 OAuth 授权。
 
-| | |
-|---|---|
-| **输入** | GSC API（OAuth 认证） |
-| **输出** | `output/gsc/ranking_pages_{filter}_{date}.csv` — 页面级排名数据 |
-| | `output/gsc/query_page_zero_click_{filter}_{date}.csv` — 零点击页面及查询词 |
-| **配置** | `site_url`, `credentials_file`, `date_range`, `seo.page_filter`, `seo.exclude_patterns` |
-
-`page_filter` 控制范围：设为 `"sciencepedia"` 则只拉取路径含 sciencepedia 的页面。
-
----
+`fetch` 的 summary 中，`daily_page_rows` 是过滤后实际写入 `daily_pages_*.csv` 的行数，`daily_page_rows_raw` 是 GSC date×page 接口返回的原始行数（过滤前）。
 
 #### 2. analyze — 数据分析
 
-从 URL 路径结构**自动发现子类型**，按子类型分组生成分析报告。
-
-| | |
-|---|---|
-| **输入** | `output/gsc/ranking_pages_*.csv`, `output/gsc/query_page_zero_click_*.csv` |
-| **输出** | `output/analyze/site_analysis.csv` — 子类型汇总表 |
-| | `output/analyze/site_analysis.json` — 完整分析（含各维度明细） |
-| | 控制台报告 |
-
-**分析维度：** 子类型分布（页面数、展示、点击、加权CTR、CTR方差、加权排名、机会分）、零点击分析、排名段分布、语言分布。
-
-**自动发现算法：** 取 URL 目录部分 → 去掉公共前缀 → 剩余路径即为子类型标签。例如 `page_filter: "sciencepedia"` 时发现 `feynman`、`feynman/keyword`、`agent-tools` 等。
+从 URL 路径结构**自动发现子类型**（如 `feynman`、`feynman/keyword`），按子类型分组输出分析报告。分析维度包括子类型分布、零点击分析、排名段分布、语言分布。
 
 根据报告设置 `seo.include_subtypes` 告诉后续步骤优化哪些子类型，设置 `seo.subtype_page_types` 指定各子类型的页面类型（影响 Schema.org 增强策略）。
 
----
-
 #### 3. rank — 优先级排名
 
-计算每个页面的优化价值，按 `seo.include_subtypes` 筛选，输出排序后的页面列表。
-
-| | |
-|---|---|
-| **输入** | `output/gsc/ranking_pages_*.csv`, `output/gsc/query_page_zero_click_*.csv` |
-| **输出** | `output/seo/priority_ranked.csv` |
-| **配置** | `seo.include_subtypes`（留空 = 全部子类型）, `seo.subtype_page_types` |
-
-**排序公式：** `priority_score = impressions × (1 - CTR)`，高展示低点击率的页面排在前面。仅保留有查询词的页面。
-
----
+按 `priority_score = impressions × (1 - CTR)` 计算每个页面的优化价值，按 `seo.include_subtypes` 筛选后输出排序列表。高展示低点击率的页面排在前面。仅保留有零点击查询词的页面（这些页面有搜索展示但没有点击，查询词数据为 LLM 优化提供关键词上下文）。
 
 #### 4. crawl — 抓取现有元数据
 
-异步抓取 `priority_ranked.csv` 中每个页面的当前 SEO 元数据。
-
-| | |
-|---|---|
-| **输入** | `output/seo/priority_ranked.csv` |
-| **输出** | `output/seo/existing_metadata.json` — 各页面的 title / description / OG / Schema.org 等 |
-| | `output/seo/crawl_report.csv` — 抓取状态与耗时 |
-| **配置** | `seo.base_url`, `seo.crawl_concurrency` |
-
----
+异步抓取排名列表中每个页面的当前 SEO 元数据（title / description / OG / Schema.org 等）。并发数通过 `seo.crawl_concurrency` 控制。
 
 #### 5. audit — 质量审计
 
-对现有元数据执行 6 条规则检测。
-
-| | |
-|---|---|
-| **输入** | `output/seo/existing_metadata.json`, `output/seo/priority_ranked.csv`, `output/gsc/query_page_zero_click_*.csv` |
-| **输出** | `output/seo/audit_report.csv` — 每页问题详情 |
-| | `output/seo/audit_summary.json` — 问题聚合统计 |
-| **配置** | `seo.max_title_length`, `seo.max_desc_length` |
-
-**6 条规则：** title 超长、description 超长、通用开头词（Explore/学习/...）、中英文不匹配、缺少查询关键词、Schema.org 结构问题。
-
----
+对现有元数据执行 6 条规则检测：title 超长、description 超长、通用开头词（Explore/学习/...）、中英文不匹配、缺少查询关键词、Schema.org 结构问题。输出问题清单供 optimize 消费。
 
 #### 6. optimize — LLM 重写
 
-整合前 5 步数据，通过 LLM 批量重写 SEO 元数据，后处理确保符合规范。
+整合前 5 步数据，通过 LLM 批量重写 SEO 元数据，后处理确保品牌后缀、长度限制、Schema.org 结构等符合规范。支持增量运行（多次运行结果合并到 `optimized_metadata.json`）。
 
+**优化去重：** 启用 `lance.enabled` 后，需先运行 `uv run python main.py init-lance` 创建 Lance 表。之后每次 optimize 自动跳过近 N 天内已优化的 URL（默认 30 天）。使用 `--top` 时会优先从后续排名自动回填，目标是保持 Top N；若去重后可用 URL 不足，实际优化数量会小于 N；若全部命中去重则本次会跳过。
 
-| | |
-|---|---|
-| **输入** | `output/seo/priority_ranked.csv`, `output/seo/existing_metadata.json`, `output/seo/audit_report.csv`, `output/gsc/query_page_zero_click_*.csv` |
-| **输出** | `output/seo/optimized_metadata.json` — 优化后的元数据（可部署） |
-| | `output/seo/original_metadata_backup.json` — 原始备份 |
-| **配置** | `optimize.*` 全部配置项，`seo.base_url`, `seo.brand_suffix` |
+**Lance 数据维护：** 使用独立脚本 `lance_cleanup.py` 管理 TOS 上的 Lance 数据：
 
-支持断点续传：已处理的批次会跳过。支持增量运行：多次运行结果会合并。
+```bash
+uv run python lance_cleanup.py stats     # 查看表状态（行数、版本数）
+uv run python lance_cleanup.py compact   # 清理旧版本文件，释放存储空间
+uv run python lance_cleanup.py purge     # 清空所有数据，保留空表结构
+```
 
-> **换站点提示：** `templates/rewrite-prompt.md` 中的平台名称和品牌后缀是硬编码的，换站点时需要手动修改，与 `config.yaml` 中的 `seo.brand_suffix` 保持一致。
+> **换站点提示：** `templates/rewrite-prompt.md` 中的平台名称和品牌后缀是硬编码的，换站点时需要手动修改。
 
----
-
-#### 7. evaluate — 效果评估
+#### 7. evaluate — 效果评估（不在 `all` 中）
 
 跟踪 GSC 指标变化趋势，评估优化效果。包含两个独立分析：
 
-- **趋势分析**（无需 `--deploy-date`）：按 `discover_subtypes` 分板块的逐日点击、展示、加权 CTR、平均排名
+- **趋势分析**（始终运行）：按子类型分板块的逐日点击、展示、加权 CTR、平均排名
 - **优化前后对比**（需 `--deploy-date`）：优化页面在部署前后的指标变化
 
-> **数据粒度：** 趋势图和 `trend_report.csv` 中的所有指标均为**每日值（daily）**，不是累计值。每个数据点代表当天的表现：点击 = 当天总点击数，展示 = 当天总展示数，加权 CTR = 当天总点击/总展示，页面数 = 当天有展示数据的唯一页面数。
-
-| | |
-|---|---|
-| **输入** | `output/gsc/daily_pages_*.csv`（fetch 输出），`output/seo/optimized_metadata.json`（optimize 输出） |
-| **输出** | `output/seo/trend_report.csv` — 逐日分板块指标 |
-| | `output/seo/trend_chart.png` — 3×2 趋势图（页面数、展示、点击、CTR、排名、CTR±1σ） |
-| | `output/seo/evaluation_report.csv` — 优化页面逐页前后对比 |
-| | `output/seo/evaluation_summary.json` — 完整评估数据 |
-| **配置** | `evaluate.deploy_date`（或 CLI `--deploy-date`） |
-
-`--deploy-date` 是优化元数据部署上线的日期，用于界定"优化前"和"优化后"的分界点。加与不加的区别：
-
-| 输出 | 不加 `--deploy-date` | 加 `--deploy-date` |
-|------|---------------------|-------------------|
-| `trend_report.csv` | 有 | 有 |
-| `trend_chart.png` | 有 | 有（额外标记部署日期竖线） |
-| `evaluation_report.csv` | 空占位 | 优化页面逐页 before/after 对比 |
-| `evaluation_summary.json` | 仅含 `trends` | 含 `trends` + `stats`（聚合对比统计） |
+`--deploy-date` 是元数据部署上线的日期。不加时只输出趋势分析；加上后额外输出优化页面逐页 before/after 对比和聚合统计。
 
 ```bash
-# 仅看趋势（不需要 deploy-date）
-uv run python main.py evaluate
-
-# 同时看趋势 + 优化前后对比（日期为优化部署上线日）
-uv run python main.py evaluate --deploy-date 2026-03-10
+uv run python main.py evaluate                              # 仅趋势
+uv run python main.py evaluate --deploy-date 2026-03-10     # 趋势 + 前后对比
 ```
 
 ## 配置参考
@@ -258,6 +213,11 @@ uv run python main.py evaluate --deploy-date 2026-03-10
 | `optimize.concurrency` | `3` | 并发 API 请求数 |
 | `optimize.temperature` | `0.3` | 生成温度 |
 | `optimize.max_retries` | `2` | 单批重试次数 |
+| `lance.enabled` | `false` | 启用优化历史记录（需配置 TOS 凭证） |
+| `lance.skip_recent_days` | `30` | 跳过近 N 天内已优化的 URL |
+| `lance.tos.endpoint` | `"tos-s3-cn-beijing.volces.com"` | TOS S3 兼容端点 |
+| `lance.tos.bucket` | `"datainfra-test"` | TOS 桶名 |
+| `lance.tos.base_path` | `"science_pedia/SEO"` | 桶内路径前缀 |
 
 ## 输出文件一览
 
@@ -286,12 +246,13 @@ uv run python main.py evaluate --deploy-date 2026-03-10
 ├── main.py                 # CLI 入口
 ├── steps/
 │   ├── _classify.py        # 共享工具：URL 子类型自动发现
+│   ├── _lance.py           # 共享工具：Lance on TOS 优化历史读写
 │   ├── fetch_gsc.py        # Step 1: GSC 数据拉取
 │   ├── analyze.py          # Step 2: 数据分析
 │   ├── rank.py             # Step 3: 优先级排名
 │   ├── crawl.py            # Step 4: 元数据抓取
 │   ├── audit.py            # Step 5: 质量审计
-│   ├── optimize.py         # Step 6: LLM 重写
+│   ├── optimize.py         # Step 6: LLM 重写 + 优化历史
 │   └── evaluate.py         # Step 7: 效果评估
 ├── templates/
 │   └── rewrite-prompt.md   # LLM prompt 模板
