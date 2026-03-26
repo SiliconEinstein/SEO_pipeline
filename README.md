@@ -26,7 +26,7 @@ cp .env.example .env
 | `seo.base_url` | 网站域名 | `"https://www.example.com"` |
 | `seo.brand_suffix` | 品牌后缀 | `" \| MyBrand"` |
 
-编辑 `.env`（optimize 步骤需要）：
+编辑 `.env`（按启用功能配置）：
 
 ```
 LITELLM_PROXY_API_BASE=https://your-litellm-proxy.example.com
@@ -35,7 +35,16 @@ LITELLM_PROXY_API_KEY=sk-xxx
 # 优化历史（Lance on TOS），不配则自动关闭历史功能
 TOS_ACCESS_KEY=
 TOS_SECRET_KEY=
+
+# 上传钩子（run_pipeline_scheduled.sh / upload_optimized.py）
+SEO_UPLOAD_API_BASE=https://api.example.com
 ```
+
+环境变量要求（按功能）：
+
+- `LITELLM_PROXY_API_BASE` / `LITELLM_PROXY_API_KEY`：`optimize` 必需。  
+- `SEO_UPLOAD_API_BASE`：上传钩子必需。  
+- `TOS_ACCESS_KEY` / `TOS_SECRET_KEY`：仅 `lance.enabled: true` 时必需。
 
 ### 3. OAuth 凭证
 
@@ -143,6 +152,45 @@ uv run python main.py evaluate --deploy-date 2026-03-20  # 趋势 + 优化前后
 uv run python main.py fetch -v                   # 详细日志
 ```
 
+### 本地运行完整流程（含上传）
+
+在项目根目录执行：
+
+```bash
+cd <project_root>
+uv sync
+```
+
+方式 A：一键执行（推荐，含上传 + 归档）
+
+```bash
+bash scripts/run_pipeline_scheduled.sh
+```
+
+方式 B：手动分步（便于调试）
+
+```bash
+# 首次启用 Lance 时执行一次
+uv run python main.py init-lance
+
+# 跑主流程（示例 Top 30）
+uv run python main.py all --top 30
+
+# 单独触发上传（读取 output/seo/optimized_metadata.json）
+RUN_ID=$(date '+%Y%m%d_%H%M%S')
+uv run python scripts/upload_optimized.py output "$RUN_ID" 30
+```
+
+运行前请按实际启用功能配置 `.env`（见上文“环境变量要求（按功能）”），例如：
+
+```bash
+LITELLM_PROXY_API_BASE=...
+LITELLM_PROXY_API_KEY=...
+TOS_ACCESS_KEY=...
+TOS_SECRET_KEY=...
+SEO_UPLOAD_API_BASE=https://literature-sage.bohrium.com
+```
+
 ### 云服务器定时运行（示例：每两周一次）
 
 项目已提供脚本：`scripts/run_pipeline_scheduled.sh`。
@@ -162,7 +210,7 @@ uv run python main.py all --top 30
 bash scripts/run_pipeline_scheduled.sh
 ```
 
-脚本会自动做三件事（精简版）：
+脚本会自动做四件事（精简版）：
 
 1. 运行 `uv run python main.py all --top 100`。  
 2. 写日志到 `logs/run_YYYYmmdd_HHMMSS.log`。  
