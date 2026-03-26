@@ -123,7 +123,32 @@ Lance on TOS 的读写封装，为 optimize 提供优化去重和历史追溯能
 | `prompt_templates` | 模板去重存储（SHA-256 hash 作为键） | `s3://{bucket}/{base_path}/prompt_templates.lance` |
 | `optimization_history` | 每次优化的完整记录（追加模式） | `s3://{bucket}/{base_path}/optimization_history.lance` |
 
-### optimization_history Schema
+### prompt_templates — 存储内容
+
+存储 optimize 步骤使用的 prompt 模板原文，按 SHA-256 hash 去重。
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `template_hash` | string | SHA-256 哈希，作为主键去重 |
+| `template_content` | string | 完整 prompt 模板内容（`templates/rewrite-prompt.md` 渲染后的文本） |
+| `created_at` | timestamp(μs) | 模板首次写入时间 |
+
+### optimization_history — 存储内容
+
+记录每次优化的完整输入输出，包括 SEO 三大元素（title、description、Schema.org）的优化前后对比，以及优化时的上下文信息。数据来源于 optimize 步骤的后处理结果。
+
+**记录的数据：**
+- **标识与时间**：URL 路径、优化时间戳（用于去重窗口判断）
+- **Title 变更**：优化前后的 `<title>` 标签内容
+- **Description 变更**：优化前后的 `<meta name="description">` 内容
+- **Schema.org 变更**：优化前后的完整 JSON-LD 结构化数据（序列化为 JSON 字符串），包括 `_enhance_schema()` 所做的所有增强（LearningResource、DefinedTerm、isPartOf 等）
+- **优化上下文**：LLM 输入上下文（当前 title/desc/keywords、Top 5 查询词等）、审计问题清单、优先级分数、子类型标签
+- **模型与模板**：使用的 LLM 模型名称、prompt 模板 hash（关联 `prompt_templates` 表）
+
+**未记录的数据**（由后处理硬编码同步，可从已记录字段推导）：
+- OG / Twitter 标签（机械同步自 title/description）
+- meta_keywords（始终置空）
+- canonical、alternates、meta_robots、og_image、h1（从原始 metadata 深拷贝，不修改）
 
 ```python
 pa.schema([
@@ -135,6 +160,8 @@ pa.schema([
     pa.field("optimized_title", pa.string()),      # 优化后标题
     pa.field("original_description", pa.string()), # 优化前描述
     pa.field("optimized_description", pa.string()),# 优化后描述
+    pa.field("original_schema_json_ld", pa.string()),  # 优化前 Schema.org（JSON 字符串）
+    pa.field("optimized_schema_json_ld", pa.string()), # 优化后 Schema.org（JSON 字符串）
     pa.field("audit_issues", pa.string()),         # 审计问题（JSON 字符串）
     pa.field("priority_score", pa.float64()),      # 优化价值分
     pa.field("subtype", pa.string()),              # 子类型标签

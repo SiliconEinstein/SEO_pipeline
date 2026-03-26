@@ -348,8 +348,8 @@ async def _rewrite_batches(
                     json.load(f)
                 print(f"    Batch {i}: skipped (result exists)")
                 return (batch_path, True, None)
-            except (json.JSONDecodeError, Exception):
-                pass
+            except (json.JSONDecodeError, Exception) as e:
+                logger.debug("Batch %s 结果文件损坏，将重新请求: %s", i, e)
 
         async with sem:
             max_retries = opt.get("max_retries", 2)
@@ -649,6 +649,12 @@ def _postprocess_all(
                     "optimized_title": opt.get("title", ""),
                     "original_description": orig.get("meta_description", ""),
                     "optimized_description": opt.get("meta_description", ""),
+                    "original_schema_json_ld": json.dumps(
+                        orig.get("schema_json_ld", []), ensure_ascii=False
+                    ),
+                    "optimized_schema_json_ld": json.dumps(
+                        opt.get("schema_json_ld", []), ensure_ascii=False
+                    ),
                     "audit_issues": json.dumps(
                         ctx.get("issues", []), ensure_ascii=False
                     ),

@@ -10,6 +10,8 @@ output/
 __pycache__/
 *.pyc
 .venv/
+.coverage
+.pytest_cache/
 
 # 环境变量
 .env

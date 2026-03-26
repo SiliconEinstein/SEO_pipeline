@@ -41,7 +41,7 @@ def _table_names() -> list[str]:
 
 
 def cmd_stats():
-    """显示每张表的行数和版本数。"""
+    """显示每张表的行数、版本数和 schema。"""
     store, _ = _get_store()
     for name in _table_names():
         ds = store._dataset(name)
@@ -49,6 +49,8 @@ def cmd_stats():
             print(f"  {name}: 不存在")
         else:
             print(f"  {name}: {ds.count_rows()} 行, {len(ds.versions())} 个版本")
+            for field in ds.schema:
+                print(f"    - {field.name}: {field.type}")
 
 
 def cmd_compact():

@@ -68,7 +68,7 @@ TOS_SECRET_KEY=
 
 - 仅对“本次成功完成重写并进入最终输出”的页面写入优化历史。  
 - 被去重跳过、API 失败、合并失败、后处理跳过的页面不写入。  
-- 主要写入字段包括：`path`、`optimized_at`、`template_hash`、优化前后 `title/description`、`audit_issues`、`priority_score`、`subtype`、`model`。
+- 主要写入字段包括：`path`、`optimized_at`、`template_hash`、优化前后 `title/description`、优化前后 `schema_json_ld`（完整 JSON-LD 结构化数据）、`audit_issues`、`priority_score`、`subtype`、`model`。
 
 ## 使用方法
 

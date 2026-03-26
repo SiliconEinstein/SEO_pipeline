@@ -29,6 +29,8 @@ OPTIMIZATION_HISTORY_SCHEMA = pa.schema([
     pa.field("optimized_title", pa.string()),
     pa.field("original_description", pa.string()),
     pa.field("optimized_description", pa.string()),
+    pa.field("original_schema_json_ld", pa.string()),
+    pa.field("optimized_schema_json_ld", pa.string()),
     pa.field("audit_issues", pa.string()),
     pa.field("priority_score", pa.float64()),
     pa.field("subtype", pa.string()),

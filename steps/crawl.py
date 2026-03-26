@@ -15,11 +15,14 @@ from __future__ import annotations
 import asyncio
 import csv
 import json
+import logging
 import time
 from pathlib import Path
 
 import aiohttp
 from bs4 import BeautifulSoup
+
+logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
@@ -93,8 +96,8 @@ def extract_seo_metadata(html: str, path: str) -> dict:
     for script in schema_scripts:
         try:
             schemas.append(json.loads(script.string))
-        except (json.JSONDecodeError, TypeError):
-            pass
+        except (json.JSONDecodeError, TypeError) as e:
+            logger.debug("JSON-LD 解析失败，已跳过: %s", e)
     meta["schema_json_ld"] = schemas if schemas else None
 
     # <h1> tags (typically in <body>)
@@ -132,7 +135,8 @@ async def _fetch_one(
                 return path, metadata, status, elapsed
         except Exception as exc:
             elapsed = time.monotonic() - start
-            return path, {"error": str(exc)}, 0, elapsed
+            msg = str(exc).strip() or exc.__class__.__name__
+            return path, {"error": msg}, 0, elapsed
 
 
 async def _fetch_all(
