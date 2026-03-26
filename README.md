@@ -49,7 +49,7 @@ TOS_SECRET_KEY=
 本项目使用 Lance（存储在 TOS）记录每次优化历史，用于两件事：
 
 1. 避免同一 URL 在短期内被重复优化。  
-2. 保留优化前后快照，便于审计与回溯。
+2. 记录优化结果与上下文，便于审计与回溯。
 
 启用方式：
 
@@ -68,7 +68,7 @@ TOS_SECRET_KEY=
 
 - 仅对“本次成功完成重写并进入最终输出”的页面写入优化历史。  
 - 被去重跳过、API 失败、合并失败、后处理跳过的页面不写入。  
-- 主要写入字段包括：`path`、`optimized_at`、`template_hash`、优化前后 `title/description`、优化前后 `schema_json_ld`（完整 JSON-LD 结构化数据）、`audit_issues`、`priority_score`、`subtype`、`model`。
+- 主要写入字段包括：`path`、`optimized_at`、`template_hash`、`optimized_title/description`、`optimized_schema_json_ld`（完整 JSON-LD 结构化数据）、`audit_issues`、`priority_score`、`subtype`、`model`。
 
 ## 使用方法
 
@@ -173,10 +173,33 @@ bash scripts/run_pipeline_scheduled.sh
 
 上传钩子说明：
 
-1. 当前仓库提供模板：`scripts/upload_optimized.py.example`。  
-2. 你实现完成后，重命名为 `scripts/upload_optimized.py`。  
-3. 钩子参数为：`<OUTPUT_DIR> <RUN_ID> <TOP_N>`（由 `uv run python` 调用）。  
-4. 钩子失败（非 0）或文件不存在时，本次不会归档/重建 `output/`，便于排查和重试。
+1. 上传脚本已实现：`scripts/upload_optimized.py`（读取 `optimized_metadata.json`，调用 wiki API 上传）。
+2. 在 `.env` 中设置 `SEO_UPLOAD_API_BASE`（wiki API 前缀，如 `https://api.example.com`），脚本会自动加载 `.env`。
+3. 钩子参数为：`<OUTPUT_DIR> <RUN_ID> <TOP_N>`（由 `uv run python` 调用）。
+4. 非 keyword 页面会从 URL 解析 `entry_id`，再调用 `/api/v1/wiki_v2/article` 获取 `node_id` 后上传；keyword 页面直接从 URL 解析 `keyword_id` 上传。
+5. `/api/v1/wiki_v2/revision/batch_update` 当前服务端契约为 `items: []string`，每个元素是单条 item 的 JSON 字符串（不是对象数组）。
+6. 钩子失败（非 0）判定包括：有页面被 `SKIP`、`batch_update` 返回 `code != 0`、或 `code == 0` 但 `failed_count > 0`。失败时本次不会归档/重建 `output/`，便于排查和重试。
+
+上传请求示例（`items: []string`）：
+
+```json
+{
+  "items": [
+    "{\"keyword_id\":\"liquid_mirror_telescope\",\"language\":\"en-US\",\"style\":\"Feynman\",\"seo_title\":\"Liquid Mirror Telescope\",\"seo_description\":\"...\"}",
+    "{\"node_id\":\"entry-biology-graduate-principles_of_genetics-...\",\"language\":\"zh-CN\",\"style\":\"Feynman\",\"seo_title\":\"...\",\"seo_description\":\"...\"}"
+  ]
+}
+```
+
+非 keyword 的 `node_id` 获取示例（先查再传）：
+
+```json
+{
+  "entry_id": "principles_of_genetics_graduate-multiple_alleles_and_allelic_series",
+  "language": "zh-CN",
+  "style": "Feynman"
+}
+```
 
 示例 `cron`（每 14 天凌晨 3 点）：
 

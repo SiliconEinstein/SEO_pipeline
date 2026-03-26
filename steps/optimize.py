@@ -639,19 +639,13 @@ def _postprocess_all(
             records = []
             for path, opt in optimized.items():
                 ctx = ctx_lookup.get(path, {})
-                orig = original_metadata.get(path, {})
                 records.append({
                     "path": path,
                     "optimized_at": datetime.now(timezone.utc),
                     "template_hash": template_hash,
                     "context_json": json.dumps(ctx, ensure_ascii=False),
-                    "original_title": orig.get("title", ""),
                     "optimized_title": opt.get("title", ""),
-                    "original_description": orig.get("meta_description", ""),
                     "optimized_description": opt.get("meta_description", ""),
-                    "original_schema_json_ld": json.dumps(
-                        orig.get("schema_json_ld", []), ensure_ascii=False
-                    ),
                     "optimized_schema_json_ld": json.dumps(
                         opt.get("schema_json_ld", []), ensure_ascii=False
                     ),

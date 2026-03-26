@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+import steps._lance as lance_mod
 from steps.optimize import (
     _enhance_schema,
     _ensure_brand_suffix,
@@ -11,6 +12,7 @@ from steps.optimize import (
     _is_content_schema,
     _merge_with_existing,
     _parse_range,
+    _postprocess_all,
     _postprocess_page,
     _smart_truncate,
 )
@@ -295,3 +297,67 @@ def test_merge_with_existing(tmp_path):
     new = {"a": 2, "b": 3}
     result = _merge_with_existing(path, new)
     assert result == {"a": 2, "old": 99, "b": 3}
+
+
+def test_postprocess_all_lance_does_not_store_original_fields(tmp_path, monkeypatch):
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
+    output_dir = tmp_path / "out"
+    output_dir.mkdir()
+
+    contexts = [{
+        "path": "/p",
+        "issues": ["desc_too_long"],
+        "priority_score": 10.0,
+        "subtype": "sciencepedia/feynman",
+    }]
+    original_metadata = {
+        "/p": {
+            "title": "Old Title",
+            "meta_description": "Old Description",
+            "schema_json_ld": [{"@type": "Article", "headline": "old"}],
+        }
+    }
+    rewritten = {
+        "/p": {
+            "title": "New Title",
+            "meta_description": "New Description",
+        }
+    }
+
+    (tmp_dir / "seo_rewrite_contexts.json").write_text(
+        json.dumps(contexts, ensure_ascii=False), encoding="utf-8"
+    )
+    (tmp_dir / "seo_original_metadata.json").write_text(
+        json.dumps(original_metadata, ensure_ascii=False), encoding="utf-8"
+    )
+
+    captured = {}
+
+    class _FakeStore:
+        def __init__(self, _cfg):
+            pass
+
+        def save_prompt_template(self, _content):
+            return "hash123"
+
+        def record_optimizations(self, records):
+            captured["records"] = records
+
+    monkeypatch.setattr(lance_mod, "LanceStore", _FakeStore)
+
+    _postprocess_all(
+        rewritten,
+        str(tmp_dir),
+        {"base_url": "https://example.com", "brand_suffix": " | Brand"},
+        output_dir,
+        config={"lance": {"enabled": True}, "optimize": {"model": "m"}},
+        prompt_template="prompt",
+    )
+
+    records = captured["records"]
+    assert len(records) == 1
+    rec = records[0]
+    assert "original_title" not in rec
+    assert "original_description" not in rec
+    assert "original_schema_json_ld" not in rec

@@ -2,6 +2,11 @@
 set -euo pipefail
 
 # Run from project root (cron can use: cd /opt/SEO_pipeline && bash scripts/run_pipeline_scheduled.sh)
+# Load environment variables (.env) — needed for cron which has a minimal environment.
+if [[ -f .env ]]; then
+  set -a; source .env; set +a
+fi
+
 # Fixed batch size for scheduled run.
 TOP_N=100
 UPLOAD_HOOK="scripts/upload_optimized.py"
