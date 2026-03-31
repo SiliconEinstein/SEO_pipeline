@@ -25,7 +25,7 @@ seo:
 
 # --- LLM 优化配置 ---
 optimize:
-  model: "claude-sonnet-4-5"
+  model: "openai/cds/Claude-4.5-Sonnet"
   prompt_template: "templates/rewrite-prompt.md"
   top: 30
   batch_size: 10

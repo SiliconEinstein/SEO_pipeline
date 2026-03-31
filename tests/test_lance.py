@@ -58,3 +58,88 @@ def test_base_path_strip(monkeypatch):
     monkeypatch.setenv("TOS_SECRET_KEY", "sk")
     store = LanceStore({"tos": {"bucket": "b", "base_path": "/leading/trailing/"}})
     assert store._table_uri("t") == "s3://b/leading/trailing/t.lance"
+
+
+def test_ensure_scalar_index_creates_when_missing(monkeypatch):
+    monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
+    monkeypatch.setenv("TOS_SECRET_KEY", "sk")
+    store = LanceStore({"tos": {"bucket": "b", "base_path": "p"}})
+
+    class _FakeDs:
+        def __init__(self):
+            self.created = []
+
+        def index_statistics(self, name):
+            raise KeyError(name)
+
+        def create_scalar_index(self, column, index_type, name=None, replace=True):
+            self.created.append((column, index_type, name, replace))
+
+    ds = _FakeDs()
+    store._ensure_scalar_index(
+        ds,
+        column="optimized_at",
+        index_type="BTREE",
+        index_name="idx_optimization_history_optimized_at",
+    )
+    assert ds.created == [(
+        "optimized_at",
+        "BTREE",
+        "idx_optimization_history_optimized_at",
+        False,
+    )]
+
+
+def test_ensure_scalar_index_skips_when_exists(monkeypatch):
+    monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
+    monkeypatch.setenv("TOS_SECRET_KEY", "sk")
+    store = LanceStore({"tos": {"bucket": "b", "base_path": "p"}})
+
+    class _FakeDs:
+        def __init__(self):
+            self.created = []
+
+        def index_statistics(self, name):
+            return {"name": name}
+
+        def create_scalar_index(self, column, index_type, name=None, replace=True):
+            self.created.append((column, index_type, name, replace))
+
+    ds = _FakeDs()
+    store._ensure_scalar_index(
+        ds,
+        column="template_hash",
+        index_type="BTREE",
+        index_name="idx_prompt_templates_template_hash",
+    )
+    assert ds.created == []
+
+
+def test_create_tables_ensures_priority_indexes_on_existing_tables(monkeypatch):
+    monkeypatch.setenv("TOS_ACCESS_KEY", "ak")
+    monkeypatch.setenv("TOS_SECRET_KEY", "sk")
+    store = LanceStore({"tos": {"bucket": "b", "base_path": "p"}})
+
+    prompt_ds = object()
+    history_ds = object()
+
+    def _fake_dataset(name):
+        return {
+            "prompt_templates": prompt_ds,
+            "optimization_history": history_ds,
+        }[name]
+
+    calls = []
+
+    def _fake_ensure(table_name, ds):
+        calls.append((table_name, ds))
+
+    monkeypatch.setattr(store, "_dataset", _fake_dataset)
+    monkeypatch.setattr(store, "_ensure_priority_indexes", _fake_ensure)
+
+    store.create_tables()
+
+    assert calls == [
+        ("prompt_templates", prompt_ds),
+        ("optimization_history", history_ds),
+    ]

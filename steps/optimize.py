@@ -426,6 +426,43 @@ CONTENT_SCHEMA_TYPES = {
     "ScholarlyArticle", "LearningResource", "Course", "WebPage",
 }
 
+# Only rewrite title when one of these title-related issues exists.
+TITLE_REWRITE_ISSUES = {
+    "title_too_long",
+    "generic_opening",
+    "language_mismatch",
+}
+
+
+def _cleanup_truncated_tail(text: str, lang: str = "en") -> str:
+    """Clean dangling connector tokens after truncation."""
+    cleaned = text.rstrip()
+    if not cleaned:
+        return cleaned
+
+    if lang == "en":
+        cleaned = cleaned.rstrip(".,;:!?)]}\"'`|/\\-+*& ")
+        prev = None
+        while cleaned and cleaned != prev:
+            prev = cleaned
+            cleaned = re.sub(
+                r"\b(?:and|or|with|for|to|of|in|on|vs|via)\s*$",
+                "",
+                cleaned,
+                flags=re.IGNORECASE,
+            ).rstrip(".,;:!?)]}\"'`|/\\-+*& ")
+            cleaned = re.sub(r"(?:&|/|\\+|\\-|:)\s*$", "", cleaned).rstrip()
+    else:
+        cleaned = cleaned.rstrip("，。；、：！）】》」』|/\\-+*& ")
+        prev = None
+        while cleaned and cleaned != prev:
+            prev = cleaned
+            cleaned = re.sub(r"(?:与|和|及|或|的|在)$", "", cleaned).rstrip(
+                "，。；、：！）】》」』|/\\-+*& "
+            )
+
+    return cleaned
+
 
 def _smart_truncate(text: str, max_len: int, lang: str = "en") -> str:
     """Truncate at word/sentence boundary."""
@@ -436,27 +473,48 @@ def _smart_truncate(text: str, max_len: int, lang: str = "en") -> str:
         for sep in [". ", ", ", " — ", " - ", "; ", " "]:
             idx = truncated.rfind(sep)
             if idx > max_len * 0.6:
-                return truncated[:idx].rstrip(".,;: ")
+                candidate = truncated[:idx].rstrip(".,;: ")
+                cleaned = _cleanup_truncated_tail(candidate, lang)
+                return cleaned or candidate
     else:
         for sep in ["。", "，", "；", "、", " "]:
             idx = truncated.rfind(sep)
             if idx > max_len * 0.6:
-                return truncated[:idx].rstrip("。，；、 ")
-    return truncated.rstrip()
+                candidate = truncated[:idx].rstrip("。，；、 ")
+                cleaned = _cleanup_truncated_tail(candidate, lang)
+                return cleaned or candidate
+    candidate = truncated.rstrip()
+    cleaned = _cleanup_truncated_tail(candidate, lang)
+    return cleaned or candidate
+
+
+def _strip_known_brand_suffixes(title: str) -> str:
+    """Remove known trailing brand suffixes before appending canonical suffix."""
+    content = title.strip()
+    pattern = re.compile(r"\s*\|\s*(?:SciencePedia|Bohrium)\s*$", re.IGNORECASE)
+    while True:
+        stripped = pattern.sub("", content).strip()
+        if stripped == content:
+            return content
+        content = stripped
 
 
 def _ensure_brand_suffix(
     title: str, lang: str, brand_suffix: str, title_max: int
 ) -> str:
     """Ensure title ends with brand suffix and fits within max length."""
-    if not title.endswith(brand_suffix):
-        content = title.replace(brand_suffix, "").strip()
-        title = content + brand_suffix
-    if len(title) > title_max:
-        max_content = title_max - len(brand_suffix)
-        content = title.replace(brand_suffix, "").strip()
+    content = title.strip()
+    if brand_suffix and content.endswith(brand_suffix):
+        content = content[: -len(brand_suffix)].strip()
+    if brand_suffix:
+        content = content.replace(brand_suffix, "").strip()
+    content = _strip_known_brand_suffixes(content)
+    if not content:
+        content = title.strip()
+    max_content = max(title_max - len(brand_suffix), 1)
+    if len(content) > max_content:
         content = _smart_truncate(content, max_content, lang)
-        title = content + brand_suffix
+    title = (content or title.strip()) + brand_suffix
     return title
 
 
@@ -528,7 +586,13 @@ def _postprocess_page(path, rewrite, orig, ctx, seo_config):
     page_type = ctx.get("page_type", "")
     top_queries = ctx.get("top_queries", [])
 
-    title = rewrite["title"]
+    issues = set(ctx.get("issues") or [])
+    original_title = (orig.get("title") or "").strip()
+    if original_title and not (issues & TITLE_REWRITE_ISSUES):
+        # Keep original title when there are no title-specific issues.
+        title = original_title
+    else:
+        title = rewrite["title"]
     desc = rewrite["meta_description"]
     stats = {"title_truncated": False, "desc_truncated": False}
 
@@ -557,16 +621,6 @@ def _postprocess_page(path, rewrite, orig, ctx, seo_config):
         opt.get("schema_json_ld", []), headline, desc, path, page_type, rewrite
     )
     return opt, stats
-
-
-def _merge_with_existing(output_path: str, new_data: dict) -> dict:
-    """Incremental merge: if output file exists, merge new data into it."""
-    if os.path.exists(output_path):
-        with open(output_path, "r", encoding="utf-8") as f:
-            existing = json.load(f)
-        existing.update(new_data)
-        return existing
-    return new_data
 
 
 def _postprocess_all(
@@ -621,9 +675,8 @@ def _postprocess_all(
     os.makedirs(seo_out, exist_ok=True)
 
     optimized_path = os.path.join(seo_out, "optimized_metadata.json")
-    merged = _merge_with_existing(optimized_path, optimized)
     with open(optimized_path, "w", encoding="utf-8") as f:
-        json.dump(merged, f, ensure_ascii=False, indent=2)
+        json.dump(optimized, f, ensure_ascii=False, indent=2)
 
     backup_path = os.path.join(seo_out, "original_metadata_backup.json")
     with open(backup_path, "w", encoding="utf-8") as f:
@@ -675,7 +728,7 @@ def _postprocess_all(
             "title_truncated": title_truncated_count,
             "desc_truncated": desc_truncated_count,
             "issues_fixed": issues_fixed,
-            "output_total": len(merged),
+            "output_total": len(optimized),
         },
     )
 

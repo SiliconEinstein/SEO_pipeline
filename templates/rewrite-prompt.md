@@ -4,7 +4,7 @@
 
 ## Title 规则
 
-1. **≤ 60 字符**，品牌后缀 ` | SciencePedia`（16 字符）已包含在内，正文控制在 44 字符以内
+1. **≤ 60 字符**，品牌后缀 ` | SciencePedia`（15 字符）已包含在内，正文控制在 45 字符以内
 2. **主关键词前置** — 将最重要的关键词放在 title 最前面，因为 Google 截断从右侧开始
 3. **禁止 generic opener** — 不得以下列词开头：
    - 英文：Explore, Learn, Discover, Master, Understand, Dive into, Uncover, Study, Examine

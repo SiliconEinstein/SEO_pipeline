@@ -20,6 +20,7 @@ import re
 import sys
 import urllib.request
 import urllib.error
+from urllib.parse import unquote
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -57,7 +58,7 @@ def extract_keyword_id(path: str) -> str:
     match = re.search(r"/keyword/(.+?)/?$", path)
     if not match:
         raise ValueError(f"Cannot extract keyword_id from: {path}")
-    return match.group(1)
+    return unquote(match.group(1))
 
 
 def extract_entry_id(path: str) -> str:
@@ -71,7 +72,7 @@ def extract_entry_id(path: str) -> str:
     match = re.search(r"/feynman/(.+?)/?$", path)
     if not match:
         raise ValueError(f"Cannot extract entry_id from: {path}")
-    return match.group(1)
+    return unquote(match.group(1))
 
 
 # ------------------------------------------------------------------
@@ -108,7 +109,7 @@ def fetch_node_id(api_base: str, entry_id: str, language: str) -> str:
     return node_id
 
 
-def batch_update(api_base: str, items: list[dict], chunk_size: int = 50) -> None:
+def batch_update(api_base: str, items: list[dict], chunk_size: int = 200) -> None:
     """Push SEO updates to the wiki API in chunks.
 
     Splits *items* into batches of *chunk_size* and sends each separately.
@@ -122,7 +123,7 @@ def batch_update(api_base: str, items: list[dict], chunk_size: int = 50) -> None
         payload_items = [json.dumps(x, ensure_ascii=False) for x in chunk]
         resp = _api_post(
             api_base,
-            "/api/v1/wiki_v2/revision/batch_update",
+            "/api/v1/wiki_inner/revision/batch_update",
             {"items": payload_items},
         )
         if resp.get("code") != 0:

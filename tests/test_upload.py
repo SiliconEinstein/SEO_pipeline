@@ -63,8 +63,9 @@ def test_is_keyword_page(path, expected):
         ("/en/sciencepedia/feynman/keyword/liquid_mirror_telescope", "liquid_mirror_telescope"),
         ("/sciencepedia/feynman/keyword/quantum", "quantum"),
         ("/sciencepedia/feynman/keyword/a-b-c", "a-b-c"),
+        ("/en/sciencepedia/feynman/keyword/poincare%CC%81_disk_model", "poincaré_disk_model"),
     ],
-    ids=["en", "zh", "hyphens"],
+    ids=["en", "zh", "hyphens", "percent_encoded_unicode"],
 )
 def test_extract_keyword_id(path, expected):
     assert upload.extract_keyword_id(path) == expected
@@ -86,8 +87,12 @@ def test_extract_keyword_id_invalid():
             "principles_of_genetics_graduate-multiple_alleles",
         ),
         ("/en/sciencepedia/feynman/quantum_field_theory", "quantum_field_theory"),
+        (
+            "/en/sciencepedia/feynman/measure_theory_undergraduate-the_Lp_spaces_for_p_%E2%89%A5_1",
+            "measure_theory_undergraduate-the_Lp_spaces_for_p_≥_1",
+        ),
     ],
-    ids=["zh", "en"],
+    ids=["zh", "en", "percent_encoded_unicode"],
 )
 def test_extract_entry_id(path, expected):
     assert upload.extract_entry_id(path) == expected
@@ -147,6 +152,31 @@ def test_build_items_article_with_mock():
     assert items[0]["node_id"] == "node_slug_a"
     assert items[0]["language"] == "zh-CN"
     assert "keyword_id" not in items[0]
+
+
+def test_build_items_article_encoded_path_with_mock():
+    metadata = {
+        "/en/sciencepedia/feynman/solid_state_physics_undergraduate-moir%C3%A9_superlattices_and_twisted_bilayers": {
+            "title": "Title",
+            "meta_description": "Desc",
+        },
+    }
+
+    called = {}
+
+    def fake_fetch_node_id(api_base, entry_id, language):
+        called["entry_id"] = entry_id
+        called["language"] = language
+        return "node_decoded"
+
+    with patch.object(upload, "fetch_node_id", side_effect=fake_fetch_node_id):
+        items, errors = upload.build_items(metadata, "https://api.example.com")
+
+    assert len(errors) == 0
+    assert len(items) == 1
+    assert called["entry_id"] == "solid_state_physics_undergraduate-moiré_superlattices_and_twisted_bilayers"
+    assert called["language"] == "en-US"
+    assert items[0]["node_id"] == "node_decoded"
 
 
 def test_build_items_article_node_id_failure():

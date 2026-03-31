@@ -97,6 +97,46 @@ class LanceStore:
             mode="append",
         )
 
+    def _ensure_scalar_index(
+        self,
+        ds,
+        column: str,
+        index_type: str,
+        index_name: str,
+    ) -> None:
+        """Create a scalar index when missing (idempotent by index name)."""
+        try:
+            ds.index_statistics(index_name)
+            logger.info("索引已存在，跳过: %s", index_name)
+            return
+        except KeyError:
+            pass
+
+        ds.create_scalar_index(
+            column,
+            index_type,
+            name=index_name,
+            replace=False,
+        )
+        logger.info("索引已创建: %s (%s on %s)", index_name, index_type, column)
+
+    def _ensure_priority_indexes(self, table_name: str, ds) -> None:
+        """Ensure priority scalar indexes for current query patterns."""
+        if table_name == "optimization_history":
+            self._ensure_scalar_index(
+                ds,
+                column="optimized_at",
+                index_type="BTREE",
+                index_name="idx_optimization_history_optimized_at",
+            )
+        elif table_name == "prompt_templates":
+            self._ensure_scalar_index(
+                ds,
+                column="template_hash",
+                index_type="BTREE",
+                index_name="idx_prompt_templates_template_hash",
+            )
+
     # ------------------------------------------------------------------
     # Table management
     # ------------------------------------------------------------------
@@ -109,17 +149,22 @@ class LanceStore:
         }
         for name, schema in tables.items():
             ds = self._dataset(name)
-            if ds is not None:
-                logger.info("Lance 表已存在，跳过: %s", name)
-                continue
-            uri = self._table_uri(name)
-            empty = pa.Table.from_pylist([], schema=schema)
-            lance.write_dataset(
-                empty, uri,
-                storage_options=self._storage_options,
-                mode="create",
-            )
-            logger.info("Lance 表已创建: %s", uri)
+            if ds is None:
+                uri = self._table_uri(name)
+                empty = pa.Table.from_pylist([], schema=schema)
+                lance.write_dataset(
+                    empty, uri,
+                    storage_options=self._storage_options,
+                    mode="create",
+                )
+                logger.info("Lance 表已创建: %s", uri)
+                ds = self._dataset(name)
+            else:
+                logger.info("Lance 表已存在，跳过建表: %s", name)
+
+            if ds is None:
+                raise RuntimeError(f"Lance 表 {name} 创建后无法打开")
+            self._ensure_priority_indexes(name, ds)
 
     # ------------------------------------------------------------------
     # Public API

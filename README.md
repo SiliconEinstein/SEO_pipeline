@@ -225,7 +225,7 @@ bash scripts/run_pipeline_scheduled.sh
 2. 在 `.env` 中设置 `SEO_UPLOAD_API_BASE`（wiki API 前缀，如 `https://api.example.com`），脚本会自动加载 `.env`。
 3. 钩子参数为：`<OUTPUT_DIR> <RUN_ID> <TOP_N>`（由 `uv run python` 调用）。
 4. 非 keyword 页面会从 URL 解析 `entry_id`，再调用 `/api/v1/wiki_v2/article` 获取 `node_id` 后上传；keyword 页面直接从 URL 解析 `keyword_id` 上传。
-5. `/api/v1/wiki_v2/revision/batch_update` 当前服务端契约为 `items: []string`，每个元素是单条 item 的 JSON 字符串（不是对象数组）。
+5. `/api/v1/wiki_inner/revision/batch_update` 当前服务端契约为 `items: []string`，每个元素是单条 item 的 JSON 字符串（不是对象数组）。
 6. 钩子失败（非 0）判定包括：有页面被 `SKIP`、`batch_update` 返回 `code != 0`、或 `code == 0` 但 `failed_count > 0`。失败时本次不会归档/重建 `output/`，便于排查和重试。
 
 上传请求示例（`items: []string`）：
@@ -312,7 +312,7 @@ daily_pages_*.csv                 trend_chart.png
 
 #### 6. optimize — LLM 重写
 
-整合前 5 步数据，通过 LLM 批量重写 SEO 元数据，后处理确保品牌后缀、长度限制、Schema.org 结构等符合规范。支持增量运行（多次运行结果合并到 `optimized_metadata.json`）。
+整合前 5 步数据，通过 LLM 批量重写 SEO 元数据，后处理确保品牌后缀、长度限制、Schema.org 结构等符合规范。每次运行都会覆盖写入 `optimized_metadata.json`（仅保留本次运行结果）。
 
 默认从配置读取 `optimize.top: 30`；若希望本次任务处理更多或更少页面，直接在命令行传 `--top N` 覆盖。
 

@@ -10,7 +10,6 @@ from steps.optimize import (
     _ensure_brand_suffix,
     _extract_json,
     _is_content_schema,
-    _merge_with_existing,
     _parse_range,
     _postprocess_all,
     _postprocess_page,
@@ -116,6 +115,12 @@ def test_smart_truncate_exact_limit():
     assert _smart_truncate(text, len(text), "en") == text
 
 
+def test_smart_truncate_removes_dangling_connector():
+    text = "Liquid Mirror Telescope: Focal Length & Rotation"
+    result = _smart_truncate(text, 45, "en")
+    assert result == "Liquid Mirror Telescope: Focal Length"
+
+
 # ── _ensure_brand_suffix ──────────────────────────────────────────────
 
 
@@ -144,6 +149,16 @@ def test_ensure_brand_suffix_duplicate():
     result2 = _ensure_brand_suffix("Title | Brand extra text", "en", " | Brand", 60)
     assert result2.endswith(" | Brand")
     assert result2 == "Title extra text | Brand"
+
+
+def test_ensure_brand_suffix_replaces_legacy_brand():
+    result = _ensure_brand_suffix(
+        "Liquid Mirror Telescope | Bohrium",
+        "en",
+        " | SciencePedia",
+        60,
+    )
+    assert result == "Liquid Mirror Telescope | SciencePedia"
 
 
 # ── _is_content_schema ────────────────────────────────────────────────
@@ -281,22 +296,76 @@ def test_postprocess_page_missing_base_url():
         _postprocess_page("/p", {"title": "T", "meta_description": "D"}, _make_orig(), {}, {})
 
 
-# ── _merge_with_existing ──────────────────────────────────────────────
+def test_postprocess_page_keeps_original_title_without_title_issues():
+    rewrite = {"title": "New Optimized Title", "meta_description": "New desc"}
+    ctx = {"language": "en", "issues": ["desc_too_long"]}
+    seo_config = {"base_url": "https://example.com", "brand_suffix": " | Brand"}
+    opt, _ = _postprocess_page("/p", rewrite, _make_orig(), ctx, seo_config)
+    assert opt["title"] == "Old Title | Brand"
 
 
-def test_merge_no_existing(tmp_path):
-    path = str(tmp_path / "out.json")
-    new = {"a": 1, "b": 2}
-    assert _merge_with_existing(path, new) == new
+def test_postprocess_page_uses_rewrite_title_with_title_issue():
+    rewrite = {"title": "New Optimized Title", "meta_description": "New desc"}
+    ctx = {"language": "en", "issues": ["title_too_long"]}
+    seo_config = {"base_url": "https://example.com", "brand_suffix": " | Brand"}
+    opt, _ = _postprocess_page("/p", rewrite, _make_orig(), ctx, seo_config)
+    assert opt["title"] == "New Optimized Title | Brand"
 
 
-def test_merge_with_existing(tmp_path):
-    path = str(tmp_path / "out.json")
-    with open(path, "w") as f:
-        json.dump({"a": 1, "old": 99}, f)
-    new = {"a": 2, "b": 3}
-    result = _merge_with_existing(path, new)
-    assert result == {"a": 2, "old": 99, "b": 3}
+def test_postprocess_all_overwrites_existing_optimized_file(tmp_path):
+    tmp_dir = tmp_path / "tmp"
+    tmp_dir.mkdir()
+    output_dir = tmp_path / "out"
+    (output_dir / "seo").mkdir(parents=True)
+
+    # Pre-existing optimized output should be overwritten, not merged.
+    (output_dir / "seo" / "optimized_metadata.json").write_text(
+        json.dumps({"/old": {"title": "Old", "meta_description": "Old"}}),
+        encoding="utf-8",
+    )
+
+    contexts = [{
+        "path": "/new",
+        "issues": [],
+        "priority_score": 1.0,
+        "subtype": "sciencepedia/feynman",
+        "language": "en",
+    }]
+    original_metadata = {
+        "/new": {
+            "title": "Old New",
+            "meta_description": "Old New Desc",
+            "schema_json_ld": [{"@type": "Article", "headline": "old"}],
+        }
+    }
+    rewritten = {
+        "/new": {
+            "title": "New Title",
+            "meta_description": "New Description",
+        }
+    }
+
+    (tmp_dir / "seo_rewrite_contexts.json").write_text(
+        json.dumps(contexts, ensure_ascii=False), encoding="utf-8"
+    )
+    (tmp_dir / "seo_original_metadata.json").write_text(
+        json.dumps(original_metadata, ensure_ascii=False), encoding="utf-8"
+    )
+
+    _postprocess_all(
+        rewritten,
+        str(tmp_dir),
+        {"base_url": "https://example.com", "brand_suffix": " | Brand"},
+        output_dir,
+        config={"lance": {"enabled": False}},
+        prompt_template="prompt",
+    )
+
+    written = json.loads(
+        (output_dir / "seo" / "optimized_metadata.json").read_text(encoding="utf-8")
+    )
+    assert "/old" not in written
+    assert "/new" in written
 
 
 def test_postprocess_all_lance_does_not_store_original_fields(tmp_path, monkeypatch):
